@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "web" / "h3_structured_canvas.js").read_text(encoding="utf-8")
+EASYUSE_COMPAT = (ROOT / "web" / "zzz_h3sc_easyuse_compat.js").read_text(encoding="utf-8")
 
 
 class FrontendContractTests(unittest.TestCase):
@@ -26,6 +27,11 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn('make("span","h3sc-pill","PROMPT")', JS)
         self.assertNotIn('make("span", "h3sc-pill", "H3_STRUCTURE")', JS)
         self.assertNotIn('make("span", "h3sc-pill", "JSON_DEBUG")', JS)
+
+    def test_custom_dom_widget_is_excluded_from_workflow_serialization(self):
+        self.assertIn('widget.serialize = false', EASYUSE_COMPAT)
+        self.assertIn('widget.options.serialize = false', EASYUSE_COMPAT)
+        self.assertIn('widget.serializeValue = () => ""', EASYUSE_COMPAT)
 
 
 if __name__ == "__main__":
