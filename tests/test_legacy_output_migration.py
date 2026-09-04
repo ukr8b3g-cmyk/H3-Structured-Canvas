@@ -14,19 +14,25 @@ class LegacyOutputMigrationContractTests(unittest.TestCase):
         self.assertIn('outputs[3]?.type === "INT"', SOURCE)
 
     def test_canvas_width_and_height_links_are_remapped(self):
-        self.assertIn('link.origin_slot = 1', SOURCE)
-        self.assertIn('link.origin_slot = 2', SOURCE)
         self.assertIn('{ 2: 1, 3: 2 }', SOURCE)
+        self.assertIn('publicOutput(width, "width", "INT"', SOURCE)
+        self.assertIn('publicOutput(height, "height", "INT"', SOURCE)
 
     def test_legacy_debug_outputs_are_removed(self):
         self.assertIn('removeLink', SOURCE)
         self.assertIn('migrateLegacyPrompterOutputs', SOURCE)
-        self.assertIn('name: "prompt"', SOURCE)
+        self.assertIn('publicOutput(prompt, "prompt", "STRING"', SOURCE)
 
     def test_migration_runs_after_configure_and_connections(self):
         self.assertIn('scheduleMigration(this, nodeData.name)', SOURCE)
         self.assertIn('onConfigure', SOURCE)
         self.assertIn('onConnectionsChange', SOURCE)
+
+    def test_live_output_slots_are_never_written_into_serialized_workflow(self):
+        self.assertIn('function publicOutput(', SOURCE)
+        self.assertNotIn('info.outputs = this.outputs.map', SOURCE)
+        self.assertNotIn('{ ...output, links:', SOURCE)
+        self.assertIn('do not write live output slot objects', SOURCE)
 
 
 if __name__ == "__main__":
