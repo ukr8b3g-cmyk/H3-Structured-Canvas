@@ -85,7 +85,7 @@ def _box_map(layout: dict[str, Any]) -> dict[str, list[int]]:
     }
 
 
-def _effective_type(slot_config: dict[str, Any]) -> str:
+def _effective_type(slot_config: dict[str, Any], slot: str) -> str:
     declared = slot_config.get("type", "object")
     if declared != "auto":
         return declared
@@ -95,7 +95,7 @@ def _effective_type(slot_config: dict[str, Any]) -> str:
         return "graphic"
     if slot_config.get("value") is not None:
         return "graphic"
-    return "object"
+    return "subject" if slot in {"a", "b"} else "object"
 
 
 def _element_id(element_type: str, slot: str) -> str:
@@ -184,7 +184,7 @@ def _build_elements(
         slot_config = config["slots"][slot]
         if bbox is None or not slot_config.get("enabled", True):
             continue
-        element_type = _effective_type(slot_config)
+        element_type = _effective_type(slot_config, slot)
         description = slot_config.get("description", "")
         exact_text = slot_config.get("exact_text", "")
         if element_type == "text" and not exact_text:
@@ -246,12 +246,23 @@ def _build_elements(
     return elements, layout_entries, sequence_items
 
 
+def _model_elements(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Map semantic UI types to the model-facing schema proven in H3 tests."""
+    result: list[dict[str, Any]] = []
+    for source in elements:
+        item = copy.deepcopy(source)
+        if item.get("type") in {"subject", "object"}:
+            item["type"] = "obj"
+        result.append(item)
+    return result
+
+
 def _convert_qwen_unified(
     base: dict[str, Any],
     layout_entries: list[dict[str, Any]],
     elements: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    by_id = {item["id"]: copy.deepcopy(item) for item in elements}
+    by_id = {item["id"]: item for item in _model_elements(elements)}
     for entry in layout_entries:
         element = by_id.get(entry["slot"])
         if element is None:
@@ -350,6 +361,10 @@ def _resolved_summary(
                 "Do not display element IDs, JSON keys, metadata, instructions, animation names, or any additional words on screen."
             )
 
+    if config.get("full_frame", True):
+        lines.append(
+            "Use the full canvas area. Do not add letterboxing, blank margins, an inset frame, or decorative borders."
+        )
     lines.append(_camera_sentence(config["camera"]))
     if config.get("custom_instruction"):
         lines.append(config["custom_instruction"])
@@ -401,10 +416,15 @@ def compile_h3_prompt(
 
     exact_texts = [item["text"] for item in elements if item.get("type") == "text" and item.get("text")]
     constraints: dict[str, Any] = {}
+    if config.get("full_frame", True):
+        constraints["full_frame"] = True
+        constraints["no_letterboxing"] = True
+        constraints["no_blank_margins"] = True
     if exact_texts and config.get("exact_text_safety", True):
         constraints["exact_visible_text"] = exact_texts
         constraints["allow_additional_text"] = bool(config.get("allow_additional_text", False))
 
+    model_elements = _model_elements(elements)
     base_structure: dict[str, Any] = {
         "aspect_ratio": layout["canvas"]["aspect_ratio"],
         "high_level_description": scene,
@@ -413,7 +433,7 @@ def compile_h3_prompt(
             "bbox_format": "xyxy",
             "boxes": layout_entries,
         },
-        "elements": elements,
+        "elements": model_elements,
         "motion": motion,
     }
     if constraints:
