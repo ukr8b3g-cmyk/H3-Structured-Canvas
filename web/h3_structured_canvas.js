@@ -1,65 +1,154 @@
-import { app, CANVAS_NODE, PROMPTER_NODE, EXTENSION_NAME, BUILD, ensureStyles, make } from "./h3sc_shared.js";
-import { CanvasController } from "./h3sc_canvas.js";
-import { PrompterController } from "./h3sc_prompter.js";
+const appModule = window.comfyAPI?.app;
+const app = appModule?.app ?? appModule;
+const api = window.comfyAPI?.api?.api ?? window.comfyAPI?.api;
 
-function installNodeUI(nodeType, nodeData) {
-  if (nodeType.prototype.__h3scInstalled) return;
-  nodeType.prototype.__h3scInstalled = true;
-  const oldCreated = nodeType.prototype.onNodeCreated;
-  nodeType.prototype.onNodeCreated = function () {
-    oldCreated?.apply(this, arguments);
-    ensureStyles();
-    this.serialize_widgets = true;
-    const root = make("div", "h3sc-root");
-    const widget = this.addDOMWidget?.("h3sc_ui", "h3sc_ui", root, { serialize: false, hideOnZoom: false });
-    if (!widget) return;
-    const isCanvas = nodeData.name === CANVAS_NODE;
-    widget.computeSize = (width) => [width, isCanvas ? 820 : 860];
-    this.__h3scController = isCanvas ? new CanvasController(this, root) : new PrompterController(this, root);
-    const target = isCanvas ? [760, 900] : [650, 920];
-    const current = this.size || [0, 0];
-    if (current[0] < target[0] || current[1] < target[1]) this.setSize?.([Math.max(current[0], target[0]), Math.max(current[1], target[1])]);
-  };
+const CANVAS_NODE = "H3StructuredCanvas";
+const PROMPTER_NODE = "H3StructuredPrompter";
+const EXTENSION = "h3.structured.canvas.v0_9_1";
+const BUILD = "0.9.1-beta.2";
+const SLOTS = ["a", "b", "c", "d", "e"];
+const COLORS = { a: "#ef4444", b: "#3b82f6", c: "#facc15", d: "#4caf50", e: "#c13cb7" };
+const LABELS = { a: "A", b: "B", c: "C", d: "D", e: "E" };
+const MODEL_TYPES = ["subject", "object", "text", "graphic"];
+const MOTIONS = {
+  subject: ["static", "start_end", "fade_in", "slide_in_left", "slide_in_right", "scale_up", "hold"],
+  object: ["static", "start_end", "fade_in", "slide_in_left", "slide_in_right", "scale_up", "hold"],
+  text: ["static", "fade_in", "fade_out", "slide_in_left", "slide_in_right", "slide_up", "slide_down", "scale_up", "scale_down", "pop_in", "reveal", "hold"],
+  graphic: ["static", "fade_in", "slide_in_left", "slide_in_right", "scale_up", "grow_up", "grow_right", "radial_fill", "progress_fill", "reveal", "hold"],
+};
+const CAMERA = ["Static Shot", "Push In", "Pull Out", "Pan Left", "Pan Right", "Truck Left", "Truck Right", "Tilt Up", "Tilt Down", "Pedestal Up", "Pedestal Down", "Arc Shot", "Tracking Shot", "POV", "Roll Clockwise", "Roll Counterclockwise"];
+const RESOLUTIONS = [
+  ["640 × 640 (1:1)", 640, 640], ["768 × 768 (1:1)", 768, 768], ["1024 × 1024 (1:1)", 1024, 1024],
+  ["1344 × 768 (16:9)", 1344, 768], ["1280 × 720 (16:9)", 1280, 720], ["768 × 1344 (9:16)", 768, 1344], ["720 × 1280 (9:16)", 720, 1280]
+];
+const CANVAS_PRESETS = {
+  two_subjects: [["a", 80, 120, 420, 940], ["b", 600, 120, 920, 940]],
+  three_columns: [["a", 40, 180, 300, 900], ["b", 370, 180, 630, 900], ["c", 700, 180, 960, 900]],
+  title_chart: [["a", 150, 100, 850, 230], ["b", 200, 280, 800, 820], ["c", 350, 450, 650, 620], ["d", 250, 850, 750, 940]],
+};
 
-  const oldConfigure = nodeType.prototype.onConfigure;
-  nodeType.prototype.onConfigure = function (info) {
-    oldConfigure?.apply(this, arguments);
-    queueMicrotask(() => this.__h3scController?.reloadFromWidgets());
-  };
+const I18N = {
+  en: {
+    show: "Show Boxes", draw: "Draw Box", reset: "Reset", del: "Delete Active", grid: "Grid", thirds: "Thirds", cross: "Cross", quarters: "Quarters", none: "None",
+    size: "CANVAS SIZE", preset: "Preset", apply: "Apply", scene: "SCENE / BACKGROUND", scenePh: "Describe the whole scene and background.",
+    description: "Description", type: "Type", motion: "Motion", exact: "Exact Text", value: "Value", phase: "Phase", custom: "Custom motion behavior",
+    subject: "Subject", object: "Object", text: "Text", graphic: "Graphic", enabled: "Enabled", camera: "CAMERA", speed: "Speed", amplitude: "Amplitude",
+    advanced: "ADVANCED OPTIONS", compiler: "Compiler", output: "Output", schema: "Schema", reinforce: "Reinforcement", duration: "Duration (seconds)",
+    frames: "H3 frames", fullFrame: "Full frame / no letterbox", textSafety: "Exact Text Safety", extraText: "Allow extra visible text", instruction: "Additional instruction",
+    sound: "Soundscape", music: "Music", save: "Save", load: "Load", delete: "Delete", presetName: "Preset name", noPreset: "No preset selected.",
+    endOk: "End Canvas connected", endMissing: "End Canvas not connected", hint: "Start → End needs a second Canvas connected to end_layout.",
+    layoutNote: "0–1000 normalized xyxy. Colors are UI-only and are not sent to H3.", promptNote: "H3_PROMPT + H3_STRUCTURE + JSON_DEBUG + length",
+  },
+  ja: {
+    show: "BOX表示", draw: "BOX描画", reset: "全消去", del: "選択BOX削除", grid: "グリッド", thirds: "三分割", cross: "中央線", quarters: "四分割", none: "なし",
+    size: "キャンバスサイズ", preset: "プリセット", apply: "適用", scene: "シーン / 背景", scenePh: "シーン全体と背景を記述します。",
+    description: "説明", type: "種類", motion: "モーション", exact: "正確な表示文字", value: "数値", phase: "順番", custom: "カスタム動作",
+    subject: "人物・生物", object: "物体", text: "文字", graphic: "グラフィック", enabled: "有効", camera: "カメラ", speed: "速度", amplitude: "振幅",
+    advanced: "詳細設定", compiler: "コンパイラ", output: "出力", schema: "スキーマ", reinforce: "補強", duration: "Duration（秒）",
+    frames: "H3フレーム", fullFrame: "全画面・レターボックス禁止", textSafety: "表示文字を厳密に保護", extraText: "追加文字を許可", instruction: "追加指示",
+    sound: "環境音", music: "音楽", save: "保存", load: "読込", delete: "削除", presetName: "プリセット名", noPreset: "プリセット未選択です。",
+    endOk: "End Canvas接続済み", endMissing: "End Canvas未接続", hint: "Start → Endは2台目のCanvasをend_layoutへ接続します。",
+    layoutNote: "0–1000正規化xyxy。色はUI識別用でH3へ送りません。", promptNote: "H3_PROMPT + H3_STRUCTURE + JSON_DEBUG + length",
+  },
+};
 
-  const oldConnections = nodeType.prototype.onConnectionsChange;
-  nodeType.prototype.onConnectionsChange = function () {
-    oldConnections?.apply(this, arguments);
-    queueMicrotask(() => this.__h3scController?.onConnectionsChanged());
-  };
+function lang(v = "auto") { if (v === "ja" || v === "en") return v; return String(navigator.language || "en").toLowerCase().startsWith("ja") ? "ja" : "en"; }
+function tx(l, k) { return I18N[lang(l)]?.[k] ?? I18N.en[k] ?? k; }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function clone(v) { return JSON.parse(JSON.stringify(v)); }
+function parse(v, fallback) { try { const x = typeof v === "string" ? JSON.parse(v) : v; return x && typeof x === "object" ? x : clone(fallback); } catch { return clone(fallback); } }
+function el(tag, cls = "", text = null) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== null) e.textContent = text; return e; }
+function opt(value, label) { const e = document.createElement("option"); e.value = value; e.textContent = label; return e; }
+function field(label, control, cls = "") { const w = el("label", `h3sc-field ${cls}`); w.append(el("span", "h3sc-label", label), control); return w; }
+function widget(node, name) { return node.widgets?.find(w => w.name === name); }
+function hideWidget(w) { if (!w || w.__h3scHidden) return; w.__h3scHidden = true; w.computeSize = () => [0, -4]; w.draw = () => {}; }
+function setWidget(w, value, node) { if (!w) return; w.value = value; w.callback?.(value, app?.canvas, node, [0, 0], null); node.setDirtyCanvas?.(true, true); app?.graph?.setDirtyCanvas?.(true, true); }
+function connected(node, name) { return Boolean(node.inputs?.find(i => i.name === name)?.link != null); }
+function stopEvents(root) { for (const name of ["pointerdown", "mousedown", "click", "dblclick"]) root.addEventListener(name, e => { if (e.target.closest("button,input,textarea,select,canvas,summary,details")) e.stopPropagation(); }); root.addEventListener("wheel", e => { if (e.target.closest("textarea,.h3sc-scroll")) e.stopPropagation(); }, { passive: true }); }
+function h3Length(seconds) { const s = Math.max(0, Number(seconds) || 0); if (!s) return 5; const target = Math.max(5, Math.ceil(s * 24)); return target <= 5 ? 5 : Math.ceil((target - 5) / 17) * 17 + 5; }
+function aspect(w, h) { const r = w / h; const x = [[1, 1], [16, 9], [9, 16], [4, 3], [3, 4]]; let b = x[0]; for (const p of x) if (Math.abs(r - p[0] / p[1]) < Math.abs(r - b[0] / b[1])) b = p; return `${b[0]}:${b[1]}`; }
+function modelType(v, slot) { if (MODEL_TYPES.includes(v)) return v; return slot === "a" || slot === "b" ? "subject" : "object"; }
+function defaultSlot(s) { return { slot: s, enabled: true, type: s === "a" || s === "b" ? "subject" : "object", description: "", exact_text: "", motion: "static", value: null, phase: SLOTS.indexOf(s) + 1, custom_behavior: "" }; }
+function defaultCanvas() { return { schema: "h3_structured_canvas/0.9", canvas: { width: 1024, height: 1024, aspect_ratio: "1:1", coordinate_space: "normalized_0_1000", bbox_format: "xyxy", grid: "thirds", show_boxes: true, active_slot: "a", ui_language: "auto" }, boxes: [] }; }
+function defaultPrompt() { return { schema: "h3_structured_prompt_config/0.9", ui_language: "auto", scene_description: "", duration_seconds: 5, compiler_mode: "hybrid", output_format: "direct", schema_profile: "verified_split_bbox", reinforcement: "balanced", exact_text_safety: true, allow_additional_text: false, full_frame: true, slots: Object.fromEntries(SLOTS.map(s => [s, defaultSlot(s)])), camera: { motion: "Static Shot", speed: "auto", amplitude: "auto" }, soundscape: "", music: "", custom_instruction: "", _ui: { expanded: { a: true, b: false, c: false, d: false, e: false }, advanced: false } }; }
+function cleanCanvas(raw) { const d = defaultCanvas(), s = raw && typeof raw === "object" ? raw : {}; d.canvas = { ...d.canvas, ...(s.canvas || {}) }; d.canvas.width = clamp(Math.round(Number(d.canvas.width) || 1024), 64, 16384); d.canvas.height = clamp(Math.round(Number(d.canvas.height) || 1024), 64, 16384); d.canvas.aspect_ratio = aspect(d.canvas.width, d.canvas.height); d.canvas.active_slot = SLOTS.includes(d.canvas.active_slot) ? d.canvas.active_slot : "a"; d.boxes = []; for (const [i, b] of (Array.isArray(s.boxes) ? s.boxes : []).entries()) { const slot = SLOTS.includes(String(b?.slot).toLowerCase()) ? String(b.slot).toLowerCase() : SLOTS[i]; const q = b?.bbox_2d || b?.bbox; if (!slot || !Array.isArray(q) || q.length !== 4) continue; const [x1,y1,x2,y2] = q.map(v => clamp(Math.round(Number(v) || 0), 0, 1000)); if (x2 > x1 && y2 > y1) d.boxes.push({ slot, ui_color: {a:"red",b:"blue",c:"yellow",d:"green",e:"magenta"}[slot], bbox_2d:[x1,y1,x2,y2] }); } return d; }
+function cleanPrompt(raw) { const d = defaultPrompt(), s = raw && typeof raw === "object" ? raw : {}; for (const k of ["ui_language","scene_description","duration_seconds","compiler_mode","output_format","schema_profile","reinforcement","exact_text_safety","allow_additional_text","full_frame","soundscape","music","custom_instruction"]) if (k in s) d[k] = s[k]; d.camera = { ...d.camera, ...(s.camera || {}) }; d.slots = Object.fromEntries(SLOTS.map(slot => { const q = { ...defaultSlot(slot), ...(s.slots?.[slot] || {}) }; q.type = modelType(q.type, slot); q.motion = MOTIONS[q.type]?.includes(q.motion) ? q.motion : "static"; return [slot, q]; })); d._ui = { expanded: { ...d._ui.expanded, ...(s._ui?.expanded || {}) }, advanced: Boolean(s._ui?.advanced) }; return d; }
 
-  const oldResize = nodeType.prototype.onResize;
-  nodeType.prototype.onResize = function () {
-    oldResize?.apply(this, arguments);
-    this.__h3scController?.onResize();
-  };
+async function fetchApi(path, options = {}) { if (api?.fetchApi) return api.fetchApi(path, options); return fetch(path, options); }
+function localKey(kind) { return `h3_structured_canvas:${kind}:presets:v2`; }
+function localPresets(kind) { try { const x = JSON.parse(localStorage.getItem(localKey(kind)) || "[]"); return Array.isArray(x) ? x : []; } catch { return []; } }
+async function loadPresets(kind) { try { const r = await fetchApi(`/h3_structured_canvas/presets/${kind}`); if (!r.ok) throw 0; return (await r.json()).presets || []; } catch { return localPresets(kind); } }
+async function savePreset(kind, name, data) { try { const r = await fetchApi(`/h3_structured_canvas/presets/${kind}`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({name,data}) }); if (!r.ok) throw 0; return (await r.json()).presets || []; } catch { const x = localPresets(kind).filter(p => p.name.toLowerCase() !== name.toLowerCase()); x.push({name,data}); x.sort((a,b)=>a.name.localeCompare(b.name)); localStorage.setItem(localKey(kind), JSON.stringify(x)); return x; } }
+async function deletePreset(kind, name) { try { const r = await fetchApi(`/h3_structured_canvas/presets/${kind}/delete`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({name}) }); if (!r.ok) throw 0; return (await r.json()).presets || []; } catch { const x = localPresets(kind).filter(p => p.name !== name); localStorage.setItem(localKey(kind), JSON.stringify(x)); return x; } }
 
-  const oldRemoved = nodeType.prototype.onRemoved;
-  nodeType.prototype.onRemoved = function () {
-    this.__h3scController?.destroy();
-    oldRemoved?.apply(this, arguments);
-  };
-
-  const oldSerialize = nodeType.prototype.onSerialize;
-  nodeType.prototype.onSerialize = function (info) {
-    this.__h3scController?.sync?.();
-    oldSerialize?.apply(this, arguments);
-  };
+function ensureStyles() {
+  if (document.getElementById("h3sc-v091")) return;
+  const s = el("style"); s.id = "h3sc-v091"; s.textContent = `
+.h3sc{font:12px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;color:#ddd;width:100%;height:100%;min-height:0}.h3sc *{box-sizing:border-box}.h3sc-shell{display:flex;flex-direction:column;gap:7px;height:100%;padding:3px;overflow:hidden}.h3sc-scroll{overflow:auto;min-height:0;flex:1;padding-right:2px;scrollbar-width:thin}.h3sc-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.h3sc-card,.h3sc-toolbar{background:#181a1b;border:1px solid #343738;border-radius:7px;padding:7px}.h3sc-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.h3sc-title{font-size:11px;color:#48d5cf;font-weight:800;text-transform:uppercase;margin:0 0 5px}.h3sc-btn{background:#2a2d2e;color:#eee;border:1px solid #555;border-radius:5px;padding:4px 8px;cursor:pointer}.h3sc-btn:hover,.h3sc-btn.active{border-color:#48d5cf}.h3sc-btn.active,.h3sc-btn.primary{background:#176f73}.h3sc-btn.danger{border-color:#753535}.h3sc-input,.h3sc-select,.h3sc-textarea{background:#101213;color:#eee;border:1px solid #4b4f50;border-radius:5px;padding:5px 6px;min-width:0}.h3sc-textarea{width:100%;min-height:58px;resize:vertical;font:inherit}.h3sc-field{display:flex;flex-direction:column;gap:2px;min-width:0}.h3sc-label{font-size:10px;color:#aeb4b5}.h3sc-check{display:inline-flex;gap:5px;align-items:center}.h3sc-check input{accent-color:#48d5cf}.h3sc-monitor{height:clamp(360px,48vh,580px);min-height:300px;background:#090a0a;border:1px solid #2b2e2f;border-radius:8px;padding:9px;display:flex;align-items:center;justify-content:center;overflow:hidden}.h3sc-stage{position:relative;background:#202526;border:1px solid #3a3f40;border-radius:6px;overflow:hidden;max-width:100%;max-height:100%}.h3sc-stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}.h3sc-slotbar button{width:28px;height:28px;border-radius:5px;border:2px solid transparent;color:#fff;font-weight:800;text-shadow:0 1px 2px #000}.h3sc-slotbar button.active{border-color:#fff}.h3sc-grid2{display:grid;grid-template-columns:1fr 1fr;gap:7px}.h3sc-slot{background:#17191a;border:1px solid #343738;border-radius:7px;margin-bottom:6px;overflow:hidden}.h3sc-slot-head{display:flex;align-items:center;gap:7px;padding:6px 7px;cursor:pointer}.h3sc-chip{width:25px;height:25px;display:grid;place-items:center;border-radius:4px;font-weight:800;color:#fff}.h3sc-slot-head .h3sc-check{margin-left:auto}.h3sc-slot-body{padding:7px;border-top:1px solid #303334}.h3sc-slot-main{display:grid;grid-template-columns:minmax(0,1fr) 170px;gap:8px}.h3sc-side{display:flex;flex-direction:column;gap:6px}.h3sc-inline{display:grid;grid-template-columns:1fr 1fr;gap:6px}.h3sc-hidden{display:none!important}.h3sc-details{background:#17191a;border:1px solid #343738;border-radius:7px}.h3sc-details>summary{padding:7px;color:#48d5cf;font-weight:800;cursor:pointer}.h3sc-details-body{padding:0 7px 7px}.h3sc-adv{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}.h3sc-status{font-size:10px;color:#48d5cf}.h3sc-warning{color:#e4b548}.h3sc-output{background:#151718;border:1px solid #343738;border-radius:7px;padding:5px 7px;color:#9ba1a2;font-size:10px}.h3sc-pill{display:inline-block;border:1px solid #337f7c;color:#48d5cf;border-radius:99px;padding:1px 6px;margin-right:4px}.h3sc-frame{font-size:10px;color:#48d5cf;margin-top:2px}.h3sc-muted{font-size:10px;color:#93999a}.h3sc-spacer{flex:1}.h3sc-preset{min-width:150px}.h3sc-size{width:90px}.h3sc-disabled{opacity:.52}@media(max-width:700px){.h3sc-grid2,.h3sc-slot-main,.h3sc-adv{grid-template-columns:1fr}.h3sc-monitor{height:380px}}
+`;
+  document.head.append(s);
 }
 
-if (!app?.registerExtension) {
-  console.error("[H3 Structured Canvas] ComfyUI app API was not found.");
-} else {
-  app.registerExtension({
-    name: EXTENSION_NAME,
-    beforeRegisterNodeDef(nodeType, nodeData) {
-      if (nodeData.name === CANVAS_NODE || nodeData.name === PROMPTER_NODE) installNodeUI(nodeType, nodeData);
-    },
-  });
-  console.info(`[H3 Structured Canvas] frontend ${BUILD} loaded`);
+class CanvasUI {
+  constructor(node, root) {
+    this.node=node; this.root=root; this.w=widget(node,"canvas_width"); this.h=widget(node,"canvas_height"); this.j=widget(node,"layout_json"); [this.w,this.h,this.j].forEach(hideWidget);
+    this.state=cleanCanvas(parse(this.j?.value, defaultCanvas())); this.active=this.state.canvas.active_slot; this.mode="draw"; this.drag=null; this.presets=[]; this.resizeObserver=null; this.render(); this.refreshPresets();
+  }
+  get l(){return this.state.canvas.ui_language||"auto"}
+  sync(){this.state.canvas.active_slot=this.active; this.state.canvas.aspect_ratio=aspect(this.state.canvas.width,this.state.canvas.height); setWidget(this.w,this.state.canvas.width,this.node); setWidget(this.h,this.state.canvas.height,this.node); setWidget(this.j,JSON.stringify(this.state),this.node); this.draw();}
+  box(slot){return this.state.boxes.find(b=>b.slot===slot)}
+  setBox(slot,q){const b={slot,ui_color:{a:"red",b:"blue",c:"yellow",d:"green",e:"magenta"}[slot],bbox_2d:q.map(x=>Math.round(clamp(x,0,1000)))}; const i=this.state.boxes.findIndex(x=>x.slot===slot); if(i>=0)this.state.boxes[i]=b; else this.state.boxes.push(b); this.sync();}
+  deleteActive(){this.state.boxes=this.state.boxes.filter(b=>b.slot!==this.active);this.sync()}
+  render(){this.resizeObserver?.disconnect();this.root.replaceChildren();this.root.className="h3sc";stopEvents(this.root);const sh=el("div","h3sc-shell");this.root.append(sh);
+    const tb=el("div","h3sc-toolbar"); const show=el("input");show.type="checkbox";show.checked=this.state.canvas.show_boxes;show.onchange=()=>{this.state.canvas.show_boxes=show.checked;this.sync()};const sl=el("label","h3sc-check");sl.append(show,document.createTextNode(tx(this.l,"show")));tb.append(sl);
+    const draw=el("button","h3sc-btn active",tx(this.l,"draw"));draw.onclick=()=>{this.mode="draw"};const reset=el("button","h3sc-btn",tx(this.l,"reset"));reset.onclick=()=>{if(confirm("Clear all boxes?")){this.state.boxes=[];this.sync()}};const del=el("button","h3sc-btn danger",tx(this.l,"del"));del.onclick=()=>this.deleteActive();tb.append(draw,reset,del);
+    const sb=el("div","h3sc-row h3sc-slotbar");for(const s of SLOTS){const b=el("button","",LABELS[s]);b.style.background=COLORS[s];b.classList.toggle("active",s===this.active);b.onclick=()=>{this.active=s;this.state.canvas.active_slot=s;this.render()};sb.append(b)}tb.append(sb);
+    const gs=el("select","h3sc-select");for(const [v,k] of [["none","none"],["thirds","thirds"],["cross","cross"],["quarters","quarters"]])gs.append(opt(v,tx(this.l,k)));gs.value=this.state.canvas.grid;gs.onchange=()=>{this.state.canvas.grid=gs.value;this.sync()};tb.append(field(tx(this.l,"grid"),gs));
+    const ui=el("select","h3sc-select");ui.append(opt("auto","Auto"),opt("en","English"),opt("ja","日本語"));ui.value=this.l;ui.onchange=()=>{this.state.canvas.ui_language=ui.value;this.sync();this.render()};tb.append(ui);sh.append(tb);
+    const mon=el("div","h3sc-monitor");this.stage=el("div","h3sc-stage");this.canvas=el("canvas");this.stage.append(this.canvas);mon.append(this.stage);sh.append(mon);this.installCanvas();
+    const panel=el("div","h3sc-card");panel.append(el("div","h3sc-title",tx(this.l,"size")));const row=el("div","h3sc-row");const rs=el("select","h3sc-select");for(const [name,w,h] of RESOLUTIONS)rs.append(opt(`${w}x${h}`,name));const found=RESOLUTIONS.find(x=>x[1]===this.state.canvas.width&&x[2]===this.state.canvas.height);rs.value=found?`${found[1]}x${found[2]}`:"";rs.onchange=()=>{const x=RESOLUTIONS.find(q=>`${q[1]}x${q[2]}`===rs.value);if(x){this.state.canvas.width=x[1];this.state.canvas.height=x[2];this.sync();this.resizeStage()}};const wi=el("input","h3sc-input h3sc-size");wi.type="number";wi.value=this.state.canvas.width;const hi=el("input","h3sc-input h3sc-size");hi.type="number";hi.value=this.state.canvas.height;const ap=el("button","h3sc-btn",tx(this.l,"apply"));ap.onclick=()=>{this.state.canvas.width=clamp(+wi.value||1024,64,16384);this.state.canvas.height=clamp(+hi.value||1024,64,16384);this.sync();this.resizeStage()};row.append(rs,wi,document.createTextNode("×"),hi,ap);panel.append(row);
+    const pr=el("div","h3sc-row");this.presetSel=el("select","h3sc-select h3sc-preset");this.presetSel.append(opt("",tx(this.l,"preset")),opt("builtin:two_subjects","Two Subjects"),opt("builtin:three_columns","Three Columns"),opt("builtin:title_chart","Title + Chart"));const load=el("button","h3sc-btn",tx(this.l,"load"));load.onclick=()=>this.loadPreset();const save=el("button","h3sc-btn",tx(this.l,"save"));save.onclick=()=>this.saveCurrentPreset();const pd=el("button","h3sc-btn danger",tx(this.l,"delete"));pd.onclick=()=>this.deleteCurrentPreset();pr.append(this.presetSel,load,save,pd);panel.append(pr,el("div","h3sc-muted",tx(this.l,"layoutNote")));sh.append(panel);this.resizeStage();this.draw();}
+  resizeStage(){if(!this.stage)return;const m=this.stage.parentElement;const ar=this.state.canvas.width/this.state.canvas.height;const mw=Math.max(100,m.clientWidth-20),mh=Math.max(100,m.clientHeight-20);let w=mw,h=w/ar;if(h>mh){h=mh;w=h*ar}this.stage.style.width=`${w}px`;this.stage.style.height=`${h}px`;const d=devicePixelRatio||1;this.canvas.width=Math.max(1,Math.round(w*d));this.canvas.height=Math.max(1,Math.round(h*d));this.draw()}
+  draw(){if(!this.canvas)return;const c=this.canvas,ctx=c.getContext("2d"),d=devicePixelRatio||1,w=c.width/d,h=c.height/d;ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);ctx.fillStyle="#24292a";ctx.fillRect(0,0,w,h);ctx.strokeStyle="rgba(255,255,255,.18)";ctx.lineWidth=1;if(this.state.canvas.grid==="thirds"){for(const f of [1/3,2/3]){ctx.beginPath();ctx.moveTo(w*f,0);ctx.lineTo(w*f,h);ctx.stroke();ctx.beginPath();ctx.moveTo(0,h*f);ctx.lineTo(w,h*f);ctx.stroke()}}else if(this.state.canvas.grid==="cross"){ctx.beginPath();ctx.moveTo(w/2,0);ctx.lineTo(w/2,h);ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.stroke()}else if(this.state.canvas.grid==="quarters"){for(const f of [.25,.5,.75]){ctx.beginPath();ctx.moveTo(w*f,0);ctx.lineTo(w*f,h);ctx.stroke();ctx.beginPath();ctx.moveTo(0,h*f);ctx.lineTo(w,h*f);ctx.stroke()}}if(!this.state.canvas.show_boxes)return;for(const b of this.state.boxes){const [x1,y1,x2,y2]=b.bbox_2d;const x=x1/1000*w,y=y1/1000*h,bw=(x2-x1)/1000*w,bh=(y2-y1)/1000*h;ctx.fillStyle=`${COLORS[b.slot]}22`;ctx.fillRect(x,y,bw,bh);ctx.strokeStyle=COLORS[b.slot];ctx.lineWidth=b.slot===this.active?2.5:1.5;ctx.strokeRect(x,y,bw,bh);ctx.fillStyle=COLORS[b.slot];ctx.fillRect(x,y,24,20);ctx.fillStyle="#fff";ctx.font="bold 12px sans-serif";ctx.fillText(LABELS[b.slot],x+8,y+14);if(b.slot===this.active){for(const [hx,hy] of [[x,y],[x+bw,y],[x,y+bh],[x+bw,y+bh]]){ctx.fillStyle=COLORS[b.slot];ctx.fillRect(hx-4,hy-4,8,8)}}}}
+  pointer(e){const r=this.canvas.getBoundingClientRect();return [clamp((e.clientX-r.left)/r.width*1000,0,1000),clamp((e.clientY-r.top)/r.height*1000,0,1000)]}
+  hit(p){const [x,y]=p;const b=this.box(this.active);if(!b)return null;const [x1,y1,x2,y2]=b.bbox_2d;const t=18;for(const [name,hx,hy] of [["nw",x1,y1],["ne",x2,y1],["sw",x1,y2],["se",x2,y2]])if(Math.abs(x-hx)<t&&Math.abs(y-hy)<t)return {kind:"resize",name,b};if(x>=x1&&x<=x2&&y>=y1&&y<=y2)return {kind:"move",b};return null}
+  installCanvas(){this.resizeObserver=new ResizeObserver(()=>this.resizeStage());this.resizeObserver.observe(this.stage.parentElement);this.canvas.onpointerdown=e=>{e.preventDefault();this.canvas.setPointerCapture(e.pointerId);const p=this.pointer(e),hit=this.hit(p);if(hit?.kind==="move")this.drag={kind:"move",start:p,box:[...hit.b.bbox_2d]};else if(hit?.kind==="resize")this.drag={kind:"resize",name:hit.name,start:p,box:[...hit.b.bbox_2d]};else this.drag={kind:"draw",start:p};};this.canvas.onpointermove=e=>{if(!this.drag)return;const p=this.pointer(e);if(this.drag.kind==="draw"){const [sx,sy]=this.drag.start;this.setBox(this.active,[Math.min(sx,p[0]),Math.min(sy,p[1]),Math.max(sx,p[0]),Math.max(sy,p[1])])}else if(this.drag.kind==="move"){const dx=p[0]-this.drag.start[0],dy=p[1]-this.drag.start[1];let [x1,y1,x2,y2]=this.drag.box;const bw=x2-x1,bh=y2-y1;x1=clamp(x1+dx,0,1000-bw);y1=clamp(y1+dy,0,1000-bh);this.setBox(this.active,[x1,y1,x1+bw,y1+bh])}else{let [x1,y1,x2,y2]=this.drag.box;if(this.drag.name.includes("n"))y1=p[1];if(this.drag.name.includes("s"))y2=p[1];if(this.drag.name.includes("w"))x1=p[0];if(this.drag.name.includes("e"))x2=p[0];this.setBox(this.active,[Math.min(x1,x2),Math.min(y1,y2),Math.max(x1,x2),Math.max(y1,y2)])}};this.canvas.onpointerup=()=>{this.drag=null};}
+  async refreshPresets(){this.presets=await loadPresets("canvas");if(!this.presetSel)return;for(const o of [...this.presetSel.options].filter(o=>o.value.startsWith("user:")))o.remove();for(const p of this.presets)this.presetSel.append(opt(`user:${p.name}`,p.name))}
+  loadPreset(){const v=this.presetSel.value;if(v.startsWith("builtin:")){const arr=CANVAS_PRESETS[v.slice(8)]||[];this.state.boxes=arr.map(x=>({slot:x[0],ui_color:{a:"red",b:"blue",c:"yellow",d:"green",e:"magenta"}[x[0]],bbox_2d:x.slice(1)}));this.sync()}else if(v.startsWith("user:")){const p=this.presets.find(x=>x.name===v.slice(5));if(p){const ui=this.state.canvas.ui_language;this.state=cleanCanvas(p.data);this.state.canvas.ui_language=ui;this.sync();this.render()}}}
+  async saveCurrentPreset(){const n=prompt(tx(this.l,"presetName"));if(!n?.trim())return;this.presets=await savePreset("canvas",n.trim(),clone(this.state));this.refreshPresets()}
+  async deleteCurrentPreset(){const v=this.presetSel.value;if(!v.startsWith("user:"))return;this.presets=await deletePreset("canvas",v.slice(5));this.refreshPresets()}
+  reloadFromWidgets(){this.state=cleanCanvas(parse(this.j?.value,defaultCanvas()));this.active=this.state.canvas.active_slot;this.render();this.refreshPresets()}
+  onConnectionsChanged(){} onResize(){this.resizeStage()} destroy(){this.resizeObserver?.disconnect()}
 }
+
+class PrompterUI {
+  constructor(node,root){this.node=node;this.root=root;this.j=widget(node,"config_json");hideWidget(this.j);this.state=cleanPrompt(parse(this.j?.value,defaultPrompt()));this.presets=[];this.render();this.refreshPresets()}
+  get l(){return this.state.ui_language||"auto"}
+  sync(){setWidget(this.j,JSON.stringify(this.state),this.node);this.updateEnd()}
+  reloadFromWidgets(){this.state=cleanPrompt(parse(this.j?.value,defaultPrompt()));this.render();this.refreshPresets()}
+  select(items,value,change){const s=el("select","h3sc-select");for(const [v,n] of items)s.append(opt(v,n));s.value=value;s.onchange=()=>{change(s.value);this.sync()};return s}
+  render(){this.root.replaceChildren();this.root.className="h3sc";stopEvents(this.root);const sh=el("div","h3sc-shell");const sc=el("div","h3sc-scroll");sh.append(sc);this.root.append(sh);
+    const tb=el("div","h3sc-toolbar");const ui=this.select([["auto","Auto"],["en","English"],["ja","日本語"]],this.state.ui_language,v=>{this.state.ui_language=v;queueMicrotask(()=>this.render())});tb.append(ui);this.presetSel=el("select","h3sc-select h3sc-preset");this.presetSel.append(opt("",tx(this.l,"preset")));const load=el("button","h3sc-btn",tx(this.l,"load"));load.onclick=()=>this.loadPreset();const save=el("button","h3sc-btn",tx(this.l,"save"));save.onclick=()=>this.saveCurrentPreset();const del=el("button","h3sc-btn danger",tx(this.l,"delete"));del.onclick=()=>this.deleteCurrentPreset();tb.append(this.presetSel,load,save,del);sc.append(tb);
+    const scene=el("section","h3sc-card");scene.append(el("div","h3sc-title",tx(this.l,"scene")));const ta=el("textarea","h3sc-textarea");ta.placeholder=tx(this.l,"scenePh");ta.value=this.state.scene_description;ta.oninput=()=>{this.state.scene_description=ta.value;this.sync()};scene.append(ta);sc.append(scene);
+    for(const s of SLOTS)sc.append(this.slotCard(s));
+    const cam=el("section","h3sc-card");cam.append(el("div","h3sc-title",tx(this.l,"camera")));const cr=el("div","h3sc-inline");const cm=this.select(CAMERA.map(x=>[x,x]),this.state.camera.motion,v=>this.state.camera.motion=v);const sp=this.select(["auto","slow","medium","fast"].map(x=>[x,x]),this.state.camera.speed,v=>this.state.camera.speed=v);const am=this.select(["auto","small","medium","large"].map(x=>[x,x]),this.state.camera.amplitude,v=>this.state.camera.amplitude=v);cr.append(field(tx(this.l,"motion"),cm),field(`${tx(this.l,"speed")} / ${tx(this.l,"amplitude")}`,(()=>{const w=el("div","h3sc-row");w.append(sp,am);return w})()));cam.append(cr);sc.append(cam);
+    const d=el("details","h3sc-details");d.open=Boolean(this.state._ui.advanced);d.ontoggle=()=>{this.state._ui.advanced=d.open;this.sync()};d.append(el("summary","",tx(this.l,"advanced")));const db=el("div","h3sc-details-body");const ag=el("div","h3sc-adv");const comp=this.select([["hybrid","Hybrid"],["json_only","JSON Only"],["natural_language","Natural Language"]],this.state.compiler_mode,v=>this.state.compiler_mode=v);const out=this.select([["direct","Direct Prompt"],["h3_envelope","H3 Context Envelope"]],this.state.output_format,v=>this.state.output_format=v);const sch=this.select([["verified_split_bbox","Verified bbox"],["qwen_unified_bbox2d","bbox_2d Experimental"]],this.state.schema_profile,v=>this.state.schema_profile=v);const rei=this.select([["compact","Compact"],["balanced","Balanced"],["strong","Strong"]],this.state.reinforcement,v=>this.state.reinforcement=v);const dur=el("input","h3sc-input h3sc-size");dur.type="number";dur.min="0";dur.max="300";dur.step="0.1";dur.value=this.state.duration_seconds;const frame=el("div","h3sc-frame",`${tx(this.l,"frames")}: ${h3Length(this.state.duration_seconds)}`);dur.oninput=()=>{this.state.duration_seconds=Number(dur.value)||0;frame.textContent=`${tx(this.l,"frames")}: ${h3Length(this.state.duration_seconds)}`;this.sync()};const dw=el("div");dw.append(dur,frame);ag.append(field(tx(this.l,"compiler"),comp),field(tx(this.l,"output"),out),field(tx(this.l,"schema"),sch),field(tx(this.l,"reinforce"),rei),field(tx(this.l,"duration"),dw));db.append(ag);
+    const ck=el("div","h3sc-row");for(const [key,label] of [["full_frame","fullFrame"],["exact_text_safety","textSafety"],["allow_additional_text","extraText"]]){const i=el("input");i.type="checkbox";i.checked=Boolean(this.state[key]);i.onchange=()=>{this.state[key]=i.checked;this.sync()};const l=el("label","h3sc-check");l.append(i,document.createTextNode(tx(this.l,label)));ck.append(l)}db.append(ck);
+    for(const [key,label] of [["custom_instruction","instruction"],["soundscape","sound"],["music","music"]]){const a=el("textarea","h3sc-textarea");a.rows=2;a.value=this.state[key]||"";a.oninput=()=>{this.state[key]=a.value;this.sync()};db.append(field(tx(this.l,label),a))}d.append(db);sc.append(d);
+    this.endStatus=el("div","h3sc-status");sc.append(this.endStatus);const o=el("div","h3sc-output");o.innerHTML=`<span class="h3sc-pill">H3_PROMPT</span><span class="h3sc-pill">H3_STRUCTURE</span><span class="h3sc-pill">JSON_DEBUG</span><span class="h3sc-pill">length</span> ${tx(this.l,"promptNote")}`;sh.append(o);this.updateEnd();}
+  slotCard(s){const q=this.state.slots[s],card=el("section","h3sc-slot");card.classList.toggle("h3sc-disabled",!q.enabled);const head=el("div","h3sc-slot-head");const chip=el("span","h3sc-chip",LABELS[s]);chip.style.background=COLORS[s];const title=el("strong","",`SLOT ${LABELS[s]}`);const on=el("input");on.type="checkbox";on.checked=q.enabled;on.onchange=e=>{e.stopPropagation();q.enabled=on.checked;card.classList.toggle("h3sc-disabled",!q.enabled);this.sync()};const lab=el("label","h3sc-check");lab.onclick=e=>e.stopPropagation();lab.append(on,document.createTextNode(tx(this.l,"enabled")));const ch=el("span","",this.state._ui.expanded[s]?"⌃":"⌄");head.append(chip,title,lab,ch);const body=el("div","h3sc-slot-body");body.classList.toggle("h3sc-hidden",!this.state._ui.expanded[s]);head.onclick=()=>{this.state._ui.expanded[s]=!this.state._ui.expanded[s];body.classList.toggle("h3sc-hidden",!this.state._ui.expanded[s]);ch.textContent=this.state._ui.expanded[s]?"⌃":"⌄";this.sync()};card.append(head,body);
+    const main=el("div","h3sc-slot-main");const left=el("div");const desc=el("textarea","h3sc-textarea");desc.value=q.description;desc.placeholder=tx(this.l,"description");desc.oninput=()=>{q.description=desc.value;this.sync()};left.append(field(tx(this.l,"description"),desc));const side=el("div","h3sc-side");const type=this.select(MODEL_TYPES.map(v=>[v,tx(this.l,v)]),q.type,v=>{q.type=v;if(!MOTIONS[v].includes(q.motion))q.motion="static";this.sync();this.render()});const motion=this.select(MOTIONS[q.type].map(v=>[v,this.motionLabel(v)]),q.motion,v=>{q.motion=v;this.sync();this.render()});side.append(field(tx(this.l,"type"),type),field(tx(this.l,"motion"),motion));main.append(left,side);body.append(main);
+    const extra=el("div","h3sc-row");if(q.type==="text"){const x=el("input","h3sc-input");x.value=q.exact_text;x.placeholder="PROJECT COMPLETE";x.oninput=()=>{q.exact_text=x.value;this.sync()};extra.append(field(tx(this.l,"exact"),x,"h3sc-spacer"))}if(q.type==="graphic"&&["radial_fill","progress_fill","grow_up","grow_right"].includes(q.motion)){const v=el("input","h3sc-input h3sc-size");v.type="number";v.step="0.1";v.value=q.value??"";v.oninput=()=>{q.value=v.value===""?null:Number(v.value);this.sync()};extra.append(field(tx(this.l,"value"),v))}if(!["static","hold"].includes(q.motion)){const p=el("input","h3sc-input h3sc-size");p.type="number";p.min="1";p.max="99";p.value=q.phase;p.oninput=()=>{q.phase=clamp(Math.round(+p.value||1),1,99);this.sync()};extra.append(field(tx(this.l,"phase"),p))}if(extra.children.length)body.append(extra);
+    if(q.motion!=="static"){const cd=el("details","h3sc-details");cd.append(el("summary","",tx(this.l,"custom")));const cb=el("div","h3sc-details-body");const ct=el("textarea","h3sc-textarea");ct.rows=2;ct.value=q.custom_behavior;ct.oninput=()=>{q.custom_behavior=ct.value;this.sync()};cb.append(ct);if(q.motion==="start_end")cb.append(el("div","h3sc-muted",tx(this.l,"hint")));cd.append(cb);body.append(cd)}return card;}
+  motionLabel(v){const map={static:"Static",start_end:"Start → End",fade_in:"Fade In",fade_out:"Fade Out",slide_in_left:"Slide In ←",slide_in_right:"Slide In →",slide_up:"Slide Up",slide_down:"Slide Down",scale_up:"Scale Up",scale_down:"Scale Down",pop_in:"Pop In",grow_up:"Grow Up",grow_right:"Grow Right",radial_fill:"Radial Fill",progress_fill:"Progress Fill",reveal:"Reveal",hold:"Hold"};return map[v]||v}
+  updateEnd(){if(!this.endStatus)return;const need=SLOTS.some(s=>this.state.slots[s].enabled&&this.state.slots[s].motion==="start_end");if(!need){this.endStatus.textContent="";return}const ok=connected(this.node,"end_layout");this.endStatus.textContent=`${ok?"✓":"⚠"} ${tx(this.l,ok?"endOk":"endMissing")}`;this.endStatus.classList.toggle("h3sc-warning",!ok)}
+  async refreshPresets(){this.presets=await loadPresets("prompter");if(!this.presetSel)return;for(const o of [...this.presetSel.options].filter(o=>o.value.startsWith("user:")))o.remove();for(const p of this.presets)this.presetSel.append(opt(`user:${p.name}`,p.name))}
+  loadPreset(){const v=this.presetSel.value;if(!v.startsWith("user:")){alert(tx(this.l,"noPreset"));return}const p=this.presets.find(x=>x.name===v.slice(5));if(p){const ui=this.state.ui_language;this.state=cleanPrompt(p.data);this.state.ui_language=ui;this.sync();this.render();this.refreshPresets()}}
+  async saveCurrentPreset(){const n=prompt(tx(this.l,"presetName"));if(!n?.trim())return;const data=clone(this.state);delete data._ui;this.presets=await savePreset("prompter",n.trim(),data);this.refreshPresets()}
+  async deleteCurrentPreset(){const v=this.presetSel.value;if(!v.startsWith("user:"))return;this.presets=await deletePreset("prompter",v.slice(5));this.refreshPresets()}
+  onConnectionsChanged(){this.updateEnd()} onResize(){} destroy(){}
+}
+
+function install(nodeType, nodeData){if(nodeType.prototype.__h3scV091)return;nodeType.prototype.__h3scV091=true;const old=nodeType.prototype.onNodeCreated;nodeType.prototype.onNodeCreated=function(){old?.apply(this,arguments);ensureStyles();this.serialize_widgets=true;const root=el("div","h3sc");const dw=this.addDOMWidget?.("h3sc_ui","h3sc_ui",root,{serialize:false,hideOnZoom:false});if(!dw)return;const canvas=nodeData.name===CANVAS_NODE;dw.computeSize=w=>[w,canvas?800:780];this.__h3sc=canvas?new CanvasUI(this,root):new PrompterUI(this,root);const target=canvas?[740,900]:[610,820],cur=this.size||[0,0];if(cur[0]<target[0]||cur[1]<target[1])this.setSize?.([Math.max(cur[0],target[0]),Math.max(cur[1],target[1])])};const conf=nodeType.prototype.onConfigure;nodeType.prototype.onConfigure=function(){conf?.apply(this,arguments);queueMicrotask(()=>this.__h3sc?.reloadFromWidgets())};const con=nodeType.prototype.onConnectionsChange;nodeType.prototype.onConnectionsChange=function(){con?.apply(this,arguments);queueMicrotask(()=>this.__h3sc?.onConnectionsChanged())};const res=nodeType.prototype.onResize;nodeType.prototype.onResize=function(){res?.apply(this,arguments);this.__h3sc?.onResize()};const rem=nodeType.prototype.onRemoved;nodeType.prototype.onRemoved=function(){this.__h3sc?.destroy();rem?.apply(this,arguments)}}
+
+if(app?.registerExtension){app.registerExtension({name:EXTENSION,beforeRegisterNodeDef(nodeType,nodeData){if(nodeData.name===CANVAS_NODE||nodeData.name===PROMPTER_NODE)install(nodeType,nodeData)}});console.info(`[H3 Structured Canvas] ${BUILD} loaded`)}else console.error("[H3 Structured Canvas] ComfyUI app API not found");
