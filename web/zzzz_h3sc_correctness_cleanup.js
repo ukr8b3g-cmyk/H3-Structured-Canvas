@@ -38,7 +38,7 @@ function clampPercentInputs(root) {
 function renameDefaultProfile(root) {
   if (!root) return;
   for (const option of root.querySelectorAll('option[value="verified_split_bbox"]')) {
-    option.textContent = "Split BBOX (Default)";
+    if (option.textContent !== "Split BBOX (Default)") option.textContent = "Split BBOX (Default)";
   }
 }
 
@@ -66,7 +66,7 @@ function updateWarning(node) {
   if (!message) { existing?.remove(); return; }
   const warning = existing ?? document.createElement("div");
   warning.className = "h3sc-correctness-warning h3sc-status warning";
-  warning.textContent = message;
+  if (warning.textContent !== message) warning.textContent = message;
   warning.style.padding = "6px 8px";
   warning.style.border = "1px solid #7a6430";
   warning.style.borderRadius = "6px";
