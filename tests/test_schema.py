@@ -69,6 +69,38 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(warnings, [])
         self.assertEqual(layout["transition"]["end_boxes"][0]["bbox_2d"], [700, 100, 900, 900])
 
+    def test_malformed_json_fallback_is_observable(self):
+        layout, layout_warnings = schema.sanitize_layout("not-json")
+        config, config_warnings = schema.sanitize_config("not-json")
+        self.assertEqual(layout["boxes"], [])
+        self.assertTrue(any("could not be parsed" in item for item in layout_warnings))
+        self.assertTrue(any("could not be parsed" in item for item in config_warnings))
+
+    def test_empty_layout_emits_spatial_guidance_warning(self):
+        layout, warnings = schema.sanitize_layout({"canvas": {"width": 640, "height": 640}, "boxes": []})
+        self.assertEqual(layout["boxes"], [])
+        self.assertTrue(any("No active BBOX elements" in item for item in warnings))
+
+    def test_inherited_layout_warnings_survive_without_duplicates(self):
+        raw = {
+            "canvas": {"width": 640, "height": 640},
+            "boxes": [{"slot": "a", "bbox": [100, 100, 900, 900]}],
+            "warnings": ["Upstream warning", "Upstream warning"],
+        }
+        _, warnings = schema.sanitize_layout(raw)
+        self.assertEqual(warnings.count("Upstream warning"), 1)
+
+    def test_value_percent_is_clamped_to_supported_range(self):
+        config, warnings = schema.sanitize_config({
+            "slots": {
+                "a": {"type": "graphic", "value": 250},
+                "b": {"type": "graphic", "value": -10},
+            }
+        })
+        self.assertEqual(config["slots"]["a"]["value"], 100.0)
+        self.assertEqual(config["slots"]["b"]["value"], 0.0)
+        self.assertEqual(sum("was clamped" in item for item in warnings), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
