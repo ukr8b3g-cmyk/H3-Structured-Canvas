@@ -39,6 +39,16 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(nodes.H3StructuredPrompter.RETURN_NAMES, ("prompt",))
         self.assertNotIn("end_layout", nodes.H3StructuredPrompter.INPUT_TYPES().get("optional", {}))
 
+    def test_prompter_logs_layout_warnings_instead_of_discarding_them(self):
+        config = schema.default_config()
+        with self.assertLogs("h3_structured_canvas", level="WARNING") as captured:
+            (prompt,) = nodes.H3StructuredPrompter().compile(
+                {"canvas": {"width": 640, "height": 640}, "boxes": []},
+                json.dumps(config),
+            )
+        self.assertIsInstance(prompt, str)
+        self.assertTrue(any("No active BBOX elements" in line for line in captured.output))
+
     def test_node_mappings_include_transition(self):
         self.assertIn("H3StructuredCanvas", nodes.NODE_CLASS_MAPPINGS)
         self.assertIn("H3LayoutTransition", nodes.NODE_CLASS_MAPPINGS)
