@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.1-beta.2
+
+- Added real H3 `length` output derived from Duration (`17k + 5` frame grid at 24fps)
+- Model-facing Subject/Object now serialize as verified `type: "obj"`
+- Auto fallback treats A/B as Subject and C-E as Object for old saved workflows
+- Added full-frame / no-letterbox prompt reinforcement
+- Compact conditional Prompter UI: Exact Text, Value and Phase appear only when relevant
+- Removed Auto from the normal Type selector while retaining backward compatibility
+- Canonical GitHub repository is now the update source
+
 ## 0.9.0-beta.1
 
 - Initial standalone package
