@@ -112,11 +112,37 @@ class CompilerTests(unittest.TestCase):
         prompt, _, _ = compiler.compile_h3_prompt(two_box_layout(), config)
         self.assertIn("Soundscape: Wind in trees.", prompt); self.assertIn("Non-diegetic music: Soft piano.", prompt)
 
-    def test_natural_language_mode_omits_model_json(self):
+    def test_natural_language_mode_is_self_contained(self):
         config = schema.default_config(); config["compiler_mode"] = "natural_language"
-        config["slots"]["a"].update({"type": "subject", "description": "A woman."}); config["slots"]["b"]["enabled"] = False
+        config["slots"]["a"].update({"type": "subject", "description": "A woman wearing a blue coat."}); config["slots"]["b"]["enabled"] = False
         prompt, _, _ = compiler.compile_h3_prompt(two_box_layout(), config)
-        self.assertTrue(prompt.startswith("Scene:")); self.assertNotIn('"layout":', prompt); self.assertIn("subject_a occupies the left region", prompt)
+        self.assertTrue(prompt.startswith("Scene:"))
+        self.assertNotIn('"layout":', prompt)
+        self.assertIn("A woman wearing a blue coat.", prompt)
+        self.assertIn("subject_a occupies the left region", prompt)
+
+    def test_natural_language_compact_preserves_description_and_bbox_direction(self):
+        config = schema.default_config()
+        config["compiler_mode"] = "natural_language"
+        config["reinforcement"] = "compact"
+        config["slots"]["a"].update({"type": "subject", "description": "A woman wearing a blue coat."})
+        config["slots"]["b"].update({"type": "subject", "description": "A man wearing a black jacket."})
+
+        prompt_left, _, _ = compiler.compile_h3_prompt(two_box_layout(), config)
+        swapped = {
+            "canvas": {"width": 640, "height": 640},
+            "boxes": [
+                {"slot": "a", "bbox_2d": [600, 120, 920, 940]},
+                {"slot": "b", "bbox_2d": [80, 120, 420, 940]},
+            ],
+        }
+        prompt_right, _, _ = compiler.compile_h3_prompt(swapped, config)
+
+        self.assertIn("A woman wearing a blue coat.", prompt_left)
+        self.assertIn("A man wearing a black jacket.", prompt_left)
+        self.assertIn("subject_a occupies the left region", prompt_left)
+        self.assertIn("subject_a occupies the right region", prompt_right)
+        self.assertNotEqual(prompt_left, prompt_right)
 
     def test_directional_motion_templates(self):
         motions = ["move_left_right","move_right_left","move_top_bottom","move_bottom_top","slide_in_left","slide_in_right","slide_in_top","slide_in_bottom"]
@@ -147,7 +173,9 @@ class CompilerTests(unittest.TestCase):
 
     def test_missing_content_produces_warning_not_exception(self):
         prompt, structure, _=compiler.compile_h3_prompt({}, "not-json")
-        self.assertIsInstance(prompt,str); self.assertTrue(any("No active element" in item for item in structure["warnings"]))
+        self.assertIsInstance(prompt,str)
+        self.assertTrue(any("No active element" in item for item in structure["warnings"]))
+        self.assertTrue(any("could not be parsed" in item for item in structure["warnings"]))
 
 
 if __name__ == "__main__":
