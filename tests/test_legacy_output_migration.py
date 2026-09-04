@@ -30,9 +30,12 @@ class LegacyOutputMigrationContractTests(unittest.TestCase):
 
     def test_live_output_slots_are_never_written_into_serialized_workflow(self):
         self.assertIn('function publicOutput(', SOURCE)
+        self.assertIn('return {', SOURCE)
+        self.assertIn('name,', SOURCE)
+        self.assertIn('type,', SOURCE)
+        self.assertIn('links: links.filter', SOURCE)
         self.assertNotIn('info.outputs = this.outputs.map', SOURCE)
-        self.assertNotIn('{ ...output, links:', SOURCE)
-        self.assertIn('do not write live output slot objects', SOURCE)
+        self.assertNotIn('{ ...output', SOURCE)
 
 
 if __name__ == "__main__":
