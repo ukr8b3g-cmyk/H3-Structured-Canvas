@@ -27,6 +27,8 @@ jobs:
           git fetch origin main
           git checkout -B generated origin/main
           tar -xzf /tmp/h3sc_payload.tar.gz -C .
+          cp .h3sc_extra/package_init.py h3_structured_canvas/__init__.py
+          cp .h3sc_extra/presets.py h3_structured_canvas/presets.py
           python -m compileall -q .
           PYTHONPATH=tests python -m unittest discover -s tests -p 'test_*.py' -v
           node --check web/h3_structured_canvas.js
