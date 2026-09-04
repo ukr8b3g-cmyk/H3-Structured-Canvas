@@ -5,8 +5,6 @@
 > Version: `0.9.0-beta.1`  
 > 状態: テスト版。ただし、入力検証・プリセット保存・後方互換処理・単体テストを含む配布品質の実装です。
 
-![UI mockup](docs/ui-mockup.png)
-
 ## ノード
 
 ### 🧭 H3 Structured Canvas
@@ -160,10 +158,18 @@ ComfyUIサーバーへ書き込める場合は、ノード内の `user_presets/`
 
 ## インストール
 
-ZIPを解凍し、フォルダを次へ配置します。
+GitHubから直接インストールできます。
 
-```text
-ComfyUI/custom_nodes/ComfyUI-H3-Structured-Canvas
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/ukr8b3g-cmyk/-H3-Structured-Canvas.git ComfyUI-H3-Structured-Canvas
+```
+
+更新時:
+
+```bash
+cd ComfyUI/custom_nodes/ComfyUI-H3-Structured-Canvas
+git pull
 ```
 
 ComfyUIを完全に再起動してください。詳細は [INSTALL.md](INSTALL.md) を参照してください。
