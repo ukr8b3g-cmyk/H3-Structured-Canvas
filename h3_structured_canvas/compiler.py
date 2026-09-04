@@ -103,6 +103,17 @@ def _label_for(element: dict[str, Any]) -> str:
     return element.get("id", "element")
 
 
+def _description_line(element: dict[str, Any]) -> str | None:
+    """Return a compact identity/appearance sentence for natural-language output."""
+    description = str(element.get("desc") or "").strip()
+    label = _label_for(element)
+    if description:
+        return f"{label}: {description}"
+    if element.get("type") == "text" and element.get("text"):
+        return f'{label} is visible as exact on-screen text.'
+    return None
+
+
 def _animation_for(slot_config: dict[str, Any], element: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     motion = slot_config.get("motion", "none")
     if motion in {"none", "start_end"}:
@@ -260,6 +271,14 @@ def _resolved_summary(config: dict[str, Any], elements: list[dict[str, Any]], la
     lines: list[str] = [] if reinforcement == "compact" else ["Treat every element ID as a stable identity and preserve its assigned spatial region."]
     element_map = {item["id"]: item for item in elements}
     include_vertical = reinforcement == "strong"
+
+    # Natural-language mode must remain self-contained. Descriptions are always
+    # emitted here because JSON is absent in that compiler mode.
+    for element in elements:
+        description_line = _description_line(element)
+        if description_line:
+            lines.append(description_line)
+
     for entry in layout_entries:
         element = element_map.get(entry["slot"])
         if element is None:
@@ -267,8 +286,9 @@ def _resolved_summary(config: dict[str, Any], elements: list[dict[str, Any]], la
         label = _label_for(element)
         if "bbox" in entry:
             position = _position_name(entry["bbox"], include_vertical)
-            if reinforcement != "compact":
-                lines.append(f"{label} occupies the {position} region.")
+            # Compact still preserves coarse position so swapping BBOXes changes
+            # the natural-language prompt; it only omits coordinate-level detail.
+            lines.append(f"{label} occupies the {position} region.")
             if reinforcement == "strong":
                 lines.append(f"The normalized xyxy bounding box for {label} is {entry['bbox']}.")
         else:
@@ -311,6 +331,7 @@ def compile_h3_prompt(layout_raw: Any, config_raw: Any) -> tuple[str, dict[str, 
     elements, layout_entries, sequence_items = _build_elements(layout, config, warnings)
     if not elements:
         warnings.append("No active element had both a Canvas box and usable prompt content.")
+    warnings = list(dict.fromkeys(warnings))
 
     scene = config.get("scene_description") or "A coherent scene containing the specified elements."
     motion: dict[str, Any] = {"camera": config["camera"]["motion"]}
