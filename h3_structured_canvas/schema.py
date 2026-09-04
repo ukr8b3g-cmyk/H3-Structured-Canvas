@@ -12,7 +12,7 @@ import math
 import re
 from typing import Any, Iterable
 
-PACKAGE_VERSION = "0.9.0-beta.1"
+PACKAGE_VERSION = "0.9.1-beta.2"
 LAYOUT_SCHEMA = "h3_structured_canvas/0.9"
 CONFIG_SCHEMA = "h3_structured_prompt_config/0.9"
 STRUCTURE_SCHEMA = "h3_structured_prompt/0.9"
@@ -260,6 +260,7 @@ def default_config() -> dict[str, Any]:
         "reinforcement": "balanced",
         "exact_text_safety": True,
         "allow_additional_text": False,
+        "full_frame": True,
         "slots": {slot: default_slot_config(slot) for slot in SLOTS},
         "camera": {
             "motion": "Static Shot",
@@ -396,6 +397,7 @@ def sanitize_config(raw: Any) -> tuple[dict[str, Any], list[str]]:
     )
     result["exact_text_safety"] = _coerce_bool(source.get("exact_text_safety", True), True)
     result["allow_additional_text"] = _coerce_bool(source.get("allow_additional_text", False), False)
+    result["full_frame"] = _coerce_bool(source.get("full_frame", True), True)
     result["soundscape"] = _clean_text(source.get("soundscape"), MAX_DESCRIPTION_LENGTH)
     result["music"] = _clean_text(source.get("music"), MAX_DESCRIPTION_LENGTH)
     result["custom_instruction"] = _clean_text(
@@ -447,6 +449,18 @@ def sanitize_config(raw: Any) -> tuple[dict[str, Any], list[str]]:
         "amplitude": amplitude if amplitude in _ALLOWED_AMPLITUDES else "auto",
     }
     return result, warnings
+
+
+def seconds_to_h3_length(seconds: Any, fps: int = 24) -> int:
+    """Convert a duration target to the next valid H3 frame length (17k + 5)."""
+    value = _coerce_float(seconds, 5.0, 0.0, 300.0)
+    if value is None or value <= 0:
+        return 5
+    target = max(5, int(math.ceil(value * max(1, int(fps)))))
+    if target <= 5:
+        return 5
+    blocks = int(math.ceil((target - 5) / 17.0))
+    return blocks * 17 + 5
 
 
 DEFAULT_LAYOUT_JSON = dumps_compact(default_layout())
