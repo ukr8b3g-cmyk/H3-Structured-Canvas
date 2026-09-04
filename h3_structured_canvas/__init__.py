@@ -4,6 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Install correctness wrappers before nodes import compiler/schema functions.
+from . import schema as _schema
+from .correctness import install_compiler_fixes, install_schema_fixes
+
+install_schema_fixes(_schema)
+
+from . import compiler as _compiler
+
+install_compiler_fixes(_compiler)
+
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 from .schema import PACKAGE_VERSION
 
