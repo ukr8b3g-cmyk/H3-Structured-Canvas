@@ -1,0 +1,38 @@
+name: Build H3 Structured Canvas update
+
+on:
+  push:
+    branches:
+      - work/v0.9.2-ui-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct payload
+        shell: bash
+        run: |
+          cat .h3sc_payload/part-* > /tmp/h3sc_payload.b64
+          base64 -d /tmp/h3sc_payload.b64 > /tmp/h3sc_payload.tar.gz
+          echo "0161b8325c41d0de3e362a5c35209b14b901d2bd9f25bb44e1443bd09f6ba38f  /tmp/h3sc_payload.tar.gz" | sha256sum -c -
+      - name: Apply to main and validate
+        shell: bash
+        run: |
+          git fetch origin main
+          git checkout -B generated origin/main
+          tar -xzf /tmp/h3sc_payload.tar.gz -C .
+          python -m compileall -q .
+          PYTHONPATH=tests python -m unittest discover -s tests -p 'test_*.py' -v
+          node --check web/h3_structured_canvas.js
+          sha256sum -c PACKAGE_MANIFEST.sha256
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Refine H3 Structured Canvas UI and workflow"
+          git push --force origin HEAD:refs/heads/generated/v0.9.2-ui-cleanup
