@@ -1,0 +1,40 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Python syntax
+        shell: bash
+        run: python -m compileall -q .
+      - name: Python tests
+        shell: bash
+        env:
+          PYTHONPATH: tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: JavaScript syntax
+        shell: bash
+        run: |
+          node --check web/h3_structured_canvas.js
+          node --check web/zz_h3sc_output_migration.js
+          node --check web/zzz_h3sc_easyuse_compat.js
+          node --check web/zzzz_h3sc_correctness_cleanup.js
+      - name: Package manifest
+        shell: bash
+        run: python tools/verify_manifest.py
