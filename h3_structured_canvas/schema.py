@@ -136,6 +136,7 @@ def _normalize_slot(value: Any, fallback_index: int | None = None) -> str | None
 
 
 def safe_json_loads(value: Any, fallback: Any) -> Any:
+    """Compatibility helper that returns a deep-copied fallback on invalid JSON."""
     if isinstance(value, (dict, list)):
         return copy.deepcopy(value)
     if not isinstance(value, str) or not value.strip() or len(value) > MAX_JSON_LENGTH:
@@ -144,6 +145,37 @@ def safe_json_loads(value: Any, fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, ValueError, json.JSONDecodeError):
         return copy.deepcopy(fallback)
+
+
+def _load_json_source(value: Any, fallback: Any, label: str, warnings: list[str]) -> Any:
+    """Parse user-controlled JSON while making fallback behavior observable."""
+    if isinstance(value, (dict, list)):
+        return copy.deepcopy(value)
+    if not isinstance(value, str):
+        warnings.append(f"{label} was not JSON-compatible; defaults were used.")
+        return copy.deepcopy(fallback)
+    if not value.strip():
+        warnings.append(f"{label} was empty; defaults were used.")
+        return copy.deepcopy(fallback)
+    if len(value) > MAX_JSON_LENGTH:
+        warnings.append(f"{label} exceeded the maximum size; defaults were used.")
+        return copy.deepcopy(fallback)
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        warnings.append(f"{label} could not be parsed; defaults were used.")
+        return copy.deepcopy(fallback)
+
+
+def _dedupe_warnings(warnings: Iterable[Any]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in warnings:
+        text = _clean_text(item, 1000)
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
 
 
 def dumps_compact(value: Any) -> str:
@@ -251,9 +283,15 @@ def _extract_boxes(raw: dict[str, Any]) -> Iterable[Any]:
 
 def sanitize_layout(raw: Any, *, width_override: Any = None, height_override: Any = None) -> tuple[dict[str, Any], list[str]]:
     warnings: list[str] = []
-    source = safe_json_loads(raw, default_layout())
+    source = _load_json_source(raw, default_layout(), "Layout JSON", warnings)
     if not isinstance(source, dict):
-        source = default_layout(); warnings.append("Layout data was not an object; defaults were used.")
+        source = default_layout()
+        warnings.append("Layout data was not an object; defaults were used.")
+
+    inherited_warnings = source.get("warnings")
+    if isinstance(inherited_warnings, list):
+        warnings.extend(inherited_warnings)
+
     canvas = source.get("canvas") if isinstance(source.get("canvas"), dict) else {}
     base_width = source.get("width", canvas.get("width", 1024)); base_height = source.get("height", canvas.get("height", 1024))
     width = _coerce_int(width_override if width_override is not None else base_width, 1024, MIN_CANVAS_SIZE, MAX_CANVAS_SIZE)
@@ -278,6 +316,8 @@ def sanitize_layout(raw: Any, *, width_override: Any = None, height_override: An
         x1, y1, x2, y2 = item["bbox_2d"]
         if x2 - x1 < 20 or y2 - y1 < 20:
             warnings.append(f"Slot {item['slot'].upper()} has a very small bounding box.")
+    if not boxes:
+        warnings.append("No active BBOX elements are present; no spatial layout guidance will be emitted.")
 
     layout: dict[str, Any] = {
         "schema": LAYOUT_SCHEMA,
@@ -304,7 +344,7 @@ def sanitize_layout(raw: Any, *, width_override: Any = None, height_override: An
             "end_canvas": end_layout["canvas"],
             "end_boxes": end_layout["boxes"],
         }
-    return layout, warnings
+    return layout, _dedupe_warnings(warnings)
 
 
 def _choice(value: Any, allowed: set[str], default: str) -> str:
@@ -314,9 +354,10 @@ def _choice(value: Any, allowed: set[str], default: str) -> str:
 
 def sanitize_config(raw: Any) -> tuple[dict[str, Any], list[str]]:
     warnings: list[str] = []
-    source = safe_json_loads(raw, default_config())
+    source = _load_json_source(raw, default_config(), "Prompt configuration JSON", warnings)
     if not isinstance(source, dict):
-        source = default_config(); warnings.append("Prompt configuration was not an object; defaults were used.")
+        source = default_config()
+        warnings.append("Prompt configuration was not an object; defaults were used.")
     result = default_config()
     result["ui_language"] = str(source.get("ui_language", "auto")).lower()
     if result["ui_language"] not in {"auto", "en", "ja"}: result["ui_language"] = "auto"
@@ -349,7 +390,12 @@ def sanitize_config(raw: Any) -> tuple[dict[str, Any], list[str]]:
         motion_raw = str(item.get("motion", "none") or "none").strip()
         motion_raw = _LEGACY_MOTION_MAP.get(motion_raw, motion_raw)
         clean["motion"] = motion_raw if motion_raw in _ALLOWED_MOTIONS else "none"
-        clean["value"] = _coerce_float(item.get("value"), None, -100000.0, 100000.0)
+
+        raw_value = _coerce_float(item.get("value"), None)
+        clean["value"] = None if raw_value is None else max(0.0, min(100.0, raw_value))
+        if raw_value is not None and clean["value"] != raw_value:
+            warnings.append(f"Slot {slot.upper()} Value (%) was clamped to the supported 0–100 range.")
+
         clean["order"] = _coerce_int(item.get("order", item.get("phase")), SLOTS.index(slot) + 1, 1, 99)
         clean["custom_behavior"] = _clean_text(item.get("custom_behavior"), MAX_DESCRIPTION_LENGTH)
         clean_slots[slot] = clean
@@ -364,7 +410,7 @@ def sanitize_config(raw: Any) -> tuple[dict[str, Any], list[str]]:
         "speed": speed if speed in _ALLOWED_SPEEDS else "auto",
         "amplitude": amplitude if amplitude in _ALLOWED_AMPLITUDES else "auto",
     }
-    return result, warnings
+    return result, _dedupe_warnings(warnings)
 
 
 DEFAULT_LAYOUT_JSON = dumps_compact(default_layout())
