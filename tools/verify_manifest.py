@@ -13,11 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "PACKAGE_MANIFEST.sha256"
 TEXT_SUFFIXES = {".py", ".js", ".mjs", ".ts", ".json", ".md", ".toml", ".txt", ".sha256"}
+TEXT_NAMES = {".gitattributes", ".gitignore"}
 
 
 def canonical_bytes(path: Path) -> bytes:
     data = path.read_bytes()
-    if path.suffix.lower() in TEXT_SUFFIXES or path.name == ".gitattributes":
+    if path.suffix.lower() in TEXT_SUFFIXES or path.name in TEXT_NAMES:
         data = data.replace(b"\r\n", b"\n")
     return data
 
