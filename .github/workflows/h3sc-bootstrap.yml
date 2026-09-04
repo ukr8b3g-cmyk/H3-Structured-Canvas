@@ -21,14 +21,16 @@ jobs:
           cat .h3sc_payload/part-* > /tmp/h3sc_payload.b64
           base64 -d /tmp/h3sc_payload.b64 > /tmp/h3sc_payload.tar.gz
           echo "0161b8325c41d0de3e362a5c35209b14b901d2bd9f25bb44e1443bd09f6ba38f  /tmp/h3sc_payload.tar.gz" | sha256sum -c -
+          cp .h3sc_extra/package_init.py /tmp/h3sc_package_init.py
+          cp .h3sc_extra/presets.py /tmp/h3sc_presets.py
       - name: Apply to main and validate
         shell: bash
         run: |
           git fetch origin main
           git checkout -B generated origin/main
           tar -xzf /tmp/h3sc_payload.tar.gz -C .
-          cp .h3sc_extra/package_init.py h3_structured_canvas/__init__.py
-          cp .h3sc_extra/presets.py h3_structured_canvas/presets.py
+          cp /tmp/h3sc_package_init.py h3_structured_canvas/__init__.py
+          cp /tmp/h3sc_presets.py h3_structured_canvas/presets.py
           python -m compileall -q .
           PYTHONPATH=tests python -m unittest discover -s tests -p 'test_*.py' -v
           node --check web/h3_structured_canvas.js
