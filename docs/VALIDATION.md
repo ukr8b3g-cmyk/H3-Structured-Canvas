@@ -3,37 +3,43 @@
 ## Backend validation
 
 - Canvas width/height: `64–16384`
-- Coordinates: clamped to `0–1000`
-- Format: normalized `xyxy`
-- Reversed coordinates: reordered safely
-- Degenerate boxes: discarded
-- Duplicate slots: last value wins with warning
-- Text and description length limits
-- Enum allowlists for Type, Motion, Camera and compiler options
-- Invalid JSON: safe defaults, no code execution
-- Duration: converted to H3 `17k+5` frame grid at 24fps
+- BBOX coordinates are clamped to `0–1000`
+- BBOX order is normalized to `x1 < x2`, `y1 < y2`
+- duplicate slots use the final value with a warning
+- legacy UI colors and model-style IDs are normalized to A–E slots
+- Text without Exact Text is skipped with a warning
+- empty non-Text descriptions are skipped with a warning
+- Start → End without a Transition layout falls back to the start BBOX with a warning
+- mismatched Start/End aspect ratios emit a warning
 
-## Warnings in JSON_DEBUG
+## Backward compatibility
 
-Warnings include missing descriptions, Text without Exact Text, missing End Canvas, aspect mismatch, empty compiled layouts, and very small boxes.
+Saved beta workflows are migrated as follows:
 
-## Model-side limitations
+- `Auto` -> Subject for A/B, Object for C/D/E
+- `Static` -> `None`
+- `Phase` -> `Order`
+- `slide_up` -> Slide In from Bottom
+- `slide_down` -> Slide In from Top
+- obsolete `duration_seconds` is ignored
 
-- BBOX is not a pixel-exact constraint
-- Vertical placement may be overridden by natural scene composition
-- Crossing trajectories depend on aspect ratio, spacing and scene complexity
-- Semantic animation order is more reliable than exact timestamps
-- Numeric depth is intentionally excluded
-- Full-frame / no-letterbox is prompt reinforcement, not a hard decoder crop
+## Frontend safeguards
 
-## Package validation status
+- internal `layout_json` / `config_json` native widgets are visually hidden at the DOM level
+- node UI uses its own scroll region
+- DOM widget height follows node resizing
+- Exact Text / Value / Order are conditionally shown only when relevant
 
-Validated for v0.9.1-beta.2:
+## Model limitations
 
-- Python bytecode compilation: PASS
-- Python unit tests: 21 PASS
-- Semantic-motion subtests: 15 PASS
-- JavaScript syntax: PASS
-- Example/workflow JSON parsing: PASS
+Structured BBOX is soft text-conditioning guidance, not a hard spatial mask.
 
-The first live check after `git pull` should confirm DOM rendering, workflow save/reload, Canvas-to-Prompter connection, `length` connection to Core H3, and user-preset persistence.
+Observed behavior to date:
+
+- horizontal placement can be strong
+- relative size can be strong
+- vertical placement can be weaker
+- Start/End trajectory can work but is composition-dependent
+- semantic text/graphic animation can work well
+- numeric `depth`/`z` has not been validated
+- exact frame-by-frame interpolation is not guaranteed

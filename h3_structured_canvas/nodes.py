@@ -2,48 +2,25 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from .compiler import compile_h3_prompt
-from .schema import (
-    DEFAULT_CONFIG_JSON,
-    DEFAULT_LAYOUT_JSON,
-    dumps_pretty,
-    sanitize_layout,
-    seconds_to_h3_length,
-)
+from .schema import DEFAULT_CONFIG_JSON, DEFAULT_LAYOUT_JSON, sanitize_layout
 
 CATEGORY = "MiniMax H3/Structured Prompt"
 
 
 class H3StructuredCanvas:
-    """Interactive 0..1000 BBOX canvas.
-
-    The browser extension updates the hidden widgets. Optional width/height
-    sockets override the saved Canvas size at execution, allowing connection to
-    ComfyUI Resolution Selector style nodes.
-    """
+    """Interactive 0..1000 BBOX canvas."""
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "canvas_width": (
-                    "INT",
-                    {"default": 1024, "min": 64, "max": 16384, "step": 8},
-                ),
-                "canvas_height": (
-                    "INT",
-                    {"default": 1024, "min": 64, "max": 16384, "step": 8},
-                ),
-                "layout_json": (
-                    "STRING",
-                    {
-                        "default": DEFAULT_LAYOUT_JSON,
-                        "multiline": True,
-                        "dynamicPrompts": False,
-                    },
-                ),
+                "canvas_width": ("INT", {"default": 1024, "min": 64, "max": 16384, "step": 8}),
+                "canvas_height": ("INT", {"default": 1024, "min": 64, "max": 16384, "step": 8}),
+                "layout_json": ("STRING", {"default": DEFAULT_LAYOUT_JSON, "multiline": True, "dynamicPrompts": False}),
             },
             "optional": {
                 "width": ("INT", {"forceInput": True}),
@@ -51,23 +28,13 @@ class H3StructuredCanvas:
             },
         }
 
-    RETURN_TYPES = ("H3_LAYOUT", "STRING", "INT", "INT")
-    RETURN_NAMES = ("layout", "layout_json", "width", "height")
+    RETURN_TYPES = ("H3_LAYOUT", "INT", "INT")
+    RETURN_NAMES = ("layout", "width", "height")
     FUNCTION = "build"
     CATEGORY = CATEGORY
-    DESCRIPTION = (
-        "Draws normalized 0–1000 bounding boxes. The output is semantic layout "
-        "data for H3 Structured Prompter, not a hard latent-space mask."
-    )
+    DESCRIPTION = "Draw normalized 0–1000 semantic BBOX layout for H3 Structured Prompter."
 
-    def build(
-        self,
-        canvas_width: int,
-        canvas_height: int,
-        layout_json: str,
-        width: int | None = None,
-        height: int | None = None,
-    ) -> tuple[dict[str, Any], str, int, int]:
+    def build(self, canvas_width: int, canvas_height: int, layout_json: str, width: int | None = None, height: int | None = None) -> tuple[dict[str, Any], int, int]:
         layout, warnings = sanitize_layout(
             layout_json,
             width_override=width if width is not None else canvas_width,
@@ -76,65 +43,74 @@ class H3StructuredCanvas:
         if warnings:
             layout = dict(layout)
             layout["warnings"] = warnings
-        return (
-            layout,
-            dumps_pretty(layout),
-            int(layout["canvas"]["width"]),
-            int(layout["canvas"]["height"]),
-        )
+        return layout, int(layout["canvas"]["width"]), int(layout["canvas"]["height"])
+
+
+class H3LayoutTransition:
+    """Combine two Canvas layouts into Start/End soft trajectory anchors."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "start_layout": ("H3_LAYOUT", {"forceInput": True}),
+                "end_layout": ("H3_LAYOUT", {"forceInput": True}),
+            }
+        }
+
+    RETURN_TYPES = ("H3_LAYOUT",)
+    RETURN_NAMES = ("layout",)
+    FUNCTION = "combine"
+    CATEGORY = CATEGORY
+    DESCRIPTION = "Optional helper for Start → End motion. Insert between two Canvas nodes and the Prompter."
+
+    def combine(self, start_layout: Any, end_layout: Any) -> tuple[dict[str, Any]]:
+        start, start_warnings = sanitize_layout(start_layout)
+        end, end_warnings = sanitize_layout(end_layout)
+        result = copy.deepcopy(start)
+        result["transition"] = {
+            "end_canvas": copy.deepcopy(end["canvas"]),
+            "end_boxes": copy.deepcopy(end["boxes"]),
+        }
+        warnings = [*start_warnings, *(f"End layout: {item}" for item in end_warnings)]
+        if start["canvas"]["aspect_ratio"] != end["canvas"]["aspect_ratio"]:
+            warnings.append("Start and End Canvas aspect ratios differ; trajectory reliability may decrease.")
+        if warnings:
+            result["warnings"] = warnings
+        return (result,)
 
 
 class H3StructuredPrompter:
-    """Compiles Canvas layout and semantic element data into an H3 prompt."""
+    """Compile Canvas layout and semantic element data into an H3 prompt."""
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "layout": ("H3_LAYOUT", {"forceInput": True}),
-                "config_json": (
-                    "STRING",
-                    {
-                        "default": DEFAULT_CONFIG_JSON,
-                        "multiline": True,
-                        "dynamicPrompts": False,
-                    },
-                ),
-            },
-            "optional": {
-                "end_layout": ("H3_LAYOUT", {"forceInput": True}),
-            },
+                "config_json": ("STRING", {"default": DEFAULT_CONFIG_JSON, "multiline": True, "dynamicPrompts": False}),
+            }
         }
 
-    RETURN_TYPES = ("STRING", "H3_STRUCTURE", "STRING", "INT")
-    RETURN_NAMES = ("h3_prompt", "h3_structure", "json_debug", "length")
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("prompt",)
     FUNCTION = "compile"
     CATEGORY = CATEGORY
-    DESCRIPTION = (
-        "Combines semantic element descriptions, normalized BBOX layout, motion "
-        "presets, exact text constraints, and camera instructions into a Hybrid "
-        "Structured Prompt for MiniMax H3."
-    )
+    DESCRIPTION = "Compile normalized BBOX layout, semantic elements, motion presets and camera instructions into a MiniMax H3 prompt."
 
-    def compile(
-        self,
-        layout: Any,
-        config_json: str,
-        end_layout: Any = None,
-    ) -> tuple[str, dict[str, Any], str, int]:
-        prompt, structure, debug = compile_h3_prompt(layout, config_json, end_layout)
-        length = seconds_to_h3_length(
-            structure.get("config", {}).get("duration_seconds", 5.0)
-        )
-        return prompt, structure, debug, length
+    def compile(self, layout: Any, config_json: str) -> tuple[str]:
+        prompt, _structure, _debug = compile_h3_prompt(layout, config_json)
+        return (prompt,)
 
 
 NODE_CLASS_MAPPINGS = {
     "H3StructuredCanvas": H3StructuredCanvas,
+    "H3LayoutTransition": H3LayoutTransition,
     "H3StructuredPrompter": H3StructuredPrompter,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3StructuredCanvas": "🧭 H3 Structured Canvas",
+    "H3LayoutTransition": "↔ H3 Layout Transition",
     "H3StructuredPrompter": "🧩 H3 Structured Prompter",
 }

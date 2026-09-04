@@ -37,6 +37,7 @@ def _clean_data(data: Any) -> dict[str, Any]:
     serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     if len(serialized.encode("utf-8")) > MAX_SERIALIZED_BYTES:
         raise ValueError("Preset data is too large")
+    # Round-trip removes non-JSON Python objects if called from tests or plugins.
     return json.loads(serialized)
 
 

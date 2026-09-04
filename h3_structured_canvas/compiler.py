@@ -1,8 +1,8 @@
 """Deterministic H3 structured-prompt compiler.
 
-This compiler deliberately produces text conditioning only. Bounding boxes are
-semantic hints interpreted by the H3 text encoder; they are not hard masks or
-latent-space constraints.
+This compiler produces text conditioning only. Bounding boxes are semantic hints
+interpreted by the H3 text encoder; they are not hard masks or latent-space
+constraints.
 """
 
 from __future__ import annotations
@@ -29,73 +29,60 @@ _TYPE_PREFIX = {
 }
 
 _MOTION_TEMPLATES = {
+    "hold": ("hold", "The complete {label} remains fixed in its established region."),
     "fade_in": ("fade_in", "The complete {label} fades in and remains stable."),
     "fade_out": ("fade_out", "The complete {label} fades out smoothly."),
-    "slide_in_left": (
-        "slide_in",
-        "The complete {label} slides in smoothly from the left and settles in its defined region.",
-    ),
-    "slide_in_right": (
-        "slide_in",
-        "The complete {label} slides in smoothly from the right and settles in its defined region.",
-    ),
-    "slide_up": (
-        "slide_up",
-        "The complete {label} slides upward into its defined region and settles.",
-    ),
-    "slide_down": (
-        "slide_down",
-        "The complete {label} slides downward into its defined region and settles.",
-    ),
-    "scale_up": (
-        "scale_up",
-        "The complete {label} grows smoothly from small scale to its defined size and remains stable.",
-    ),
-    "scale_down": (
-        "scale_down",
-        "The complete {label} shrinks smoothly to its defined size and remains stable.",
-    ),
+    "slide_in_left": ("slide_in", "The complete {label} slides in smoothly from the left and settles in its defined region."),
+    "slide_in_right": ("slide_in", "The complete {label} slides in smoothly from the right and settles in its defined region."),
+    "slide_in_top": ("slide_in", "The complete {label} slides in smoothly from the top and settles in its defined region."),
+    "slide_in_bottom": ("slide_in", "The complete {label} slides in smoothly from the bottom and settles in its defined region."),
+    "move_left_right": ("move", "The complete {label} moves smoothly from left to right across the frame while preserving identity and appearance."),
+    "move_right_left": ("move", "The complete {label} moves smoothly from right to left across the frame while preserving identity and appearance."),
+    "move_top_bottom": ("move", "The complete {label} moves smoothly from top to bottom across the frame while preserving identity and appearance."),
+    "move_bottom_top": ("move", "The complete {label} moves smoothly from bottom to top across the frame while preserving identity and appearance."),
+    "scale_up": ("scale_up", "The complete {label} grows smoothly from small scale to its defined size and remains stable."),
+    "scale_down": ("scale_down", "The complete {label} shrinks smoothly to its defined size and remains stable."),
     "pop_in": ("pop_in", "The complete {label} pops into place and settles cleanly."),
-    "grow_up": (
-        "grow_up",
-        "The complete {label} grows vertically upward from its baseline until it reaches its defined height.",
-    ),
-    "grow_right": (
-        "grow_right",
-        "The complete {label} grows horizontally from left to right until it reaches its defined width.",
-    ),
-    "radial_fill": (
-        "radial_fill",
-        "The complete {label} fills smoothly around its circle from zero to {value_text}.",
-    ),
-    "progress_fill": (
-        "progress_fill",
-        "The complete {label} fills smoothly from zero to {value_text}.",
-    ),
+    "grow_up": ("grow_up", "The complete {label} grows vertically upward from its baseline until it reaches its defined height."),
+    "grow_down": ("grow_down", "The complete {label} grows vertically downward from its top edge until it reaches its defined height."),
+    "grow_left": ("grow_left", "The complete {label} grows horizontally from right to left until it reaches its defined width."),
+    "grow_right": ("grow_right", "The complete {label} grows horizontally from left to right until it reaches its defined width."),
+    "radial_fill": ("radial_fill", "The complete {label} fills smoothly around its circle from zero to {value_text}."),
+    "progress_fill": ("progress_fill", "The complete {label} fills smoothly from zero to {value_text}."),
     "reveal": ("reveal", "The complete {label} is revealed smoothly and remains stable."),
-    "hold": ("hold", "The complete {label} remains fixed in its established region."),
+}
+
+_DIRECTION_BY_MOTION = {
+    "slide_in_left": "left",
+    "slide_in_right": "right",
+    "slide_in_top": "top",
+    "slide_in_bottom": "bottom",
+    "move_left_right": "left_to_right",
+    "move_right_left": "right_to_left",
+    "move_top_bottom": "top_to_bottom",
+    "move_bottom_top": "bottom_to_top",
 }
 
 
-def _box_map(layout: dict[str, Any]) -> dict[str, list[int]]:
+def _box_map_from_items(items: Any) -> dict[str, list[int]]:
+    if not isinstance(items, list):
+        return {}
     return {
         item["slot"]: list(item["bbox_2d"])
-        for item in layout.get("boxes", [])
-        if isinstance(item, dict) and item.get("slot") in SLOTS
+        for item in items
+        if isinstance(item, dict) and item.get("slot") in SLOTS and isinstance(item.get("bbox_2d"), list)
     }
 
 
-def _effective_type(slot_config: dict[str, Any], slot: str) -> str:
-    declared = slot_config.get("type", "object")
-    if declared != "auto":
-        return declared
-    if slot_config.get("exact_text"):
-        return "text"
-    if slot_config.get("motion") in {"grow_up", "grow_right", "radial_fill", "progress_fill"}:
-        return "graphic"
-    if slot_config.get("value") is not None:
-        return "graphic"
-    return "subject" if slot in {"a", "b"} else "object"
+def _box_map(layout: dict[str, Any]) -> dict[str, list[int]]:
+    return _box_map_from_items(layout.get("boxes", []))
+
+
+def _transition_box_map(layout: dict[str, Any]) -> dict[str, list[int]]:
+    transition = layout.get("transition")
+    if not isinstance(transition, dict):
+        return {}
+    return _box_map_from_items(transition.get("end_boxes", []))
 
 
 def _element_id(element_type: str, slot: str) -> str:
@@ -117,8 +104,8 @@ def _label_for(element: dict[str, Any]) -> str:
 
 
 def _animation_for(slot_config: dict[str, Any], element: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    motion = slot_config.get("motion", "static")
-    if motion in {"static", "start_end"}:
+    motion = slot_config.get("motion", "none")
+    if motion in {"none", "start_end"}:
         return None, None
     template = _MOTION_TEMPLATES.get(motion)
     if template is None:
@@ -126,15 +113,14 @@ def _animation_for(slot_config: dict[str, Any], element: dict[str, Any]) -> tupl
     effect, behavior_template = template
     label = _label_for(element)
     value = slot_config.get("value")
-    behavior = slot_config.get("custom_behavior") or behavior_template.format(
-        label=label,
-        value_text=_human_value(value),
-    )
+    behavior = slot_config.get("custom_behavior") or behavior_template.format(label=label, value_text=_human_value(value))
     animation: dict[str, Any] = {"effect": effect}
-    if motion == "slide_in_left":
-        animation["from"] = "left"
-    elif motion == "slide_in_right":
-        animation["from"] = "right"
+    direction = _DIRECTION_BY_MOTION.get(motion)
+    if direction:
+        if motion.startswith("slide_in_"):
+            animation["from"] = direction
+        else:
+            animation["direction"] = direction
     if value is not None and motion in {"radial_fill", "progress_fill"}:
         animation["value"] = int(value) if float(value).is_integer() else value
     animation["behavior"] = behavior
@@ -167,14 +153,9 @@ def _camera_sentence(camera: dict[str, Any]) -> str:
     return f"The camera performs a {motion.lower()}{suffix}."
 
 
-def _build_elements(
-    layout: dict[str, Any],
-    config: dict[str, Any],
-    end_layout: dict[str, Any] | None,
-    warnings: list[str],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def _build_elements(layout: dict[str, Any], config: dict[str, Any], warnings: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     boxes = _box_map(layout)
-    end_boxes = _box_map(end_layout) if end_layout else {}
+    end_boxes = _transition_box_map(layout)
     elements: list[dict[str, Any]] = []
     layout_entries: list[dict[str, Any]] = []
     sequence_items: list[dict[str, Any]] = []
@@ -184,13 +165,13 @@ def _build_elements(
         slot_config = config["slots"][slot]
         if bbox is None or not slot_config.get("enabled", True):
             continue
-        element_type = _effective_type(slot_config, slot)
+        element_type = slot_config.get("type", "object")
         description = slot_config.get("description", "")
         exact_text = slot_config.get("exact_text", "")
         if element_type == "text" and not exact_text:
             warnings.append(f"Slot {slot.upper()} is Text but Exact Text is empty; the slot was skipped.")
             continue
-        if not description and element_type not in {"text"}:
+        if not description and element_type != "text":
             warnings.append(f"Slot {slot.upper()} has no description; the slot was skipped.")
             continue
 
@@ -204,50 +185,40 @@ def _build_elements(
         if element_type == "graphic" and value is not None:
             element["value"] = int(value) if float(value).is_integer() else value
 
-        motion = slot_config.get("motion", "static")
+        motion = slot_config.get("motion", "none")
         if motion == "start_end":
             end_bbox = end_boxes.get(slot)
             if end_bbox is None:
-                warnings.append(
-                    f"Slot {slot.upper()} requests Start-End motion but no matching End Canvas box exists; static bbox was used."
-                )
+                warnings.append(f"Slot {slot.upper()} requests Start-End motion but no matching H3 Layout Transition box exists; the start bbox was used as a static anchor.")
                 layout_entries.append({"slot": element_id, "bbox": bbox})
             else:
-                layout_entries.append(
-                    {"slot": element_id, "start_bbox": bbox, "end_bbox": end_bbox}
-                )
-                sequence_items.append(
-                    {
-                        "phase": slot_config.get("phase", SLOTS.index(slot) + 1),
-                        "slot": slot,
-                        "id": element_id,
-                        "action": (
-                            f"{element_id} transitions smoothly from its start_bbox to its end_bbox while preserving identity."
-                        ),
-                    }
-                )
+                layout_entries.append({"slot": element_id, "start_bbox": bbox, "end_bbox": end_bbox})
+                sequence_items.append({
+                    "order": slot_config.get("order", SLOTS.index(slot) + 1),
+                    "slot": slot,
+                    "id": element_id,
+                    "action": f"{element_id} transitions smoothly from its start_bbox to its end_bbox while preserving identity.",
+                })
         else:
             layout_entries.append({"slot": element_id, "bbox": bbox})
             animation, behavior = _animation_for(slot_config, element)
             if animation:
                 element["animation"] = animation
             if behavior:
-                sequence_items.append(
-                    {
-                        "phase": slot_config.get("phase", SLOTS.index(slot) + 1),
-                        "slot": slot,
-                        "id": element_id,
-                        "action": behavior,
-                    }
-                )
+                sequence_items.append({
+                    "order": slot_config.get("order", SLOTS.index(slot) + 1),
+                    "slot": slot,
+                    "id": element_id,
+                    "action": behavior,
+                })
         elements.append(element)
 
-    sequence_items.sort(key=lambda item: (item["phase"], SLOTS.index(item["slot"])))
+    sequence_items.sort(key=lambda item: (item["order"], SLOTS.index(item["slot"])))
     return elements, layout_entries, sequence_items
 
 
 def _model_elements(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Map semantic UI types to the model-facing schema proven in H3 tests."""
+    """Map semantic UI categories to the model-facing schema used by H3 tests."""
     result: list[dict[str, Any]] = []
     for source in elements:
         item = copy.deepcopy(source)
@@ -257,11 +228,7 @@ def _model_elements(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def _convert_qwen_unified(
-    base: dict[str, Any],
-    layout_entries: list[dict[str, Any]],
-    elements: list[dict[str, Any]],
-) -> dict[str, Any]:
+def _convert_qwen_unified(base: dict[str, Any], layout_entries: list[dict[str, Any]], elements: list[dict[str, Any]]) -> dict[str, Any]:
     by_id = {item["id"]: item for item in _model_elements(elements)}
     for entry in layout_entries:
         element = by_id.get(entry["slot"])
@@ -288,24 +255,11 @@ def _convert_qwen_unified(
     return result
 
 
-def _resolved_summary(
-    layout: dict[str, Any],
-    end_layout: dict[str, Any] | None,
-    config: dict[str, Any],
-    elements: list[dict[str, Any]],
-    layout_entries: list[dict[str, Any]],
-    sequence_items: list[dict[str, Any]],
-) -> list[str]:
+def _resolved_summary(config: dict[str, Any], elements: list[dict[str, Any]], layout_entries: list[dict[str, Any]], sequence_items: list[dict[str, Any]]) -> list[str]:
     reinforcement = config["reinforcement"]
-    if reinforcement == "compact":
-        lines: list[str] = []
-    else:
-        lines = [
-            "Treat every element ID as a stable identity and preserve its assigned spatial region."
-        ]
+    lines: list[str] = [] if reinforcement == "compact" else ["Treat every element ID as a stable identity and preserve its assigned spatial region."]
     element_map = {item["id"]: item for item in elements}
     include_vertical = reinforcement == "strong"
-
     for entry in layout_entries:
         element = element_map.get(entry["slot"])
         if element is None:
@@ -316,28 +270,18 @@ def _resolved_summary(
             if reinforcement != "compact":
                 lines.append(f"{label} occupies the {position} region.")
             if reinforcement == "strong":
-                lines.append(
-                    f"The normalized xyxy bounding box for {label} is {entry['bbox']}."
-                )
+                lines.append(f"The normalized xyxy bounding box for {label} is {entry['bbox']}.")
         else:
             start_position = _position_name(entry["start_bbox"], include_vertical)
             end_position = _position_name(entry["end_bbox"], include_vertical)
-            lines.append(
-                f"{label} moves from the {start_position} region to the {end_position} region over the clip."
-            )
+            lines.append(f"{label} moves from the {start_position} region to the {end_position} region over the clip.")
             if reinforcement == "strong":
-                lines.append(
-                    f"Its normalized start box is {entry['start_bbox']} and its normalized end box is {entry['end_bbox']}."
-                )
+                lines.append(f"Its normalized start box is {entry['start_bbox']} and its normalized end box is {entry['end_bbox']}.")
 
     static_entries = [item for item in layout_entries if "bbox" in item]
     if reinforcement in {"balanced", "strong"} and len(static_entries) >= 2:
-        areas = {
-            item["slot"]: (item["bbox"][2] - item["bbox"][0]) * (item["bbox"][3] - item["bbox"][1])
-            for item in static_entries
-        }
-        smallest = min(areas, key=areas.get)
-        largest = max(areas, key=areas.get)
+        areas = {item["slot"]: (item["bbox"][2] - item["bbox"][0]) * (item["bbox"][3] - item["bbox"][1]) for item in static_entries}
+        smallest = min(areas, key=areas.get); largest = max(areas, key=areas.get)
         if areas[smallest] > 0 and areas[largest] / areas[smallest] >= 1.6:
             lines.append(f"{largest} appears substantially larger than {smallest}.")
 
@@ -346,52 +290,25 @@ def _resolved_summary(
         for index, item in enumerate(sequence_items, start=1):
             lines.append(f"{index}. {item['action']}")
 
-    duration = config.get("duration_seconds")
-    if duration and duration > 0:
-        lines.append(
-            f"Use the approximately {duration:g}-second clip as a soft duration target; exact frame timing is not required."
-        )
-
     exact_texts = [item.get("text") for item in elements if item.get("type") == "text" and item.get("text")]
     if exact_texts and config.get("exact_text_safety", True):
         quoted = ", ".join(json.dumps(text, ensure_ascii=False) for text in exact_texts)
         lines.append(f"Preserve the exact visible text: {quoted}.")
         if not config.get("allow_additional_text", False):
-            lines.append(
-                "Do not display element IDs, JSON keys, metadata, instructions, animation names, or any additional words on screen."
-            )
-
+            lines.append("Do not display element IDs, JSON keys, metadata, instructions, animation names, or any additional words on screen.")
     if config.get("full_frame", True):
-        lines.append(
-            "Use the full canvas area. Do not add letterboxing, blank margins, an inset frame, or decorative borders."
-        )
+        lines.append("Use the full canvas area. Do not add letterboxing, blank margins, an inset frame, or decorative borders.")
     lines.append(_camera_sentence(config["camera"]))
     if config.get("custom_instruction"):
         lines.append(config["custom_instruction"])
     return lines
 
 
-def compile_h3_prompt(
-    layout_raw: Any,
-    config_raw: Any,
-    end_layout_raw: Any = None,
-) -> tuple[str, dict[str, Any], str]:
+def compile_h3_prompt(layout_raw: Any, config_raw: Any) -> tuple[str, dict[str, Any], str]:
     layout, layout_warnings = sanitize_layout(layout_raw)
     config, config_warnings = sanitize_config(config_raw)
     warnings = [*layout_warnings, *config_warnings]
-
-    end_layout: dict[str, Any] | None = None
-    if end_layout_raw is not None:
-        end_layout, end_warnings = sanitize_layout(end_layout_raw)
-        warnings.extend(f"End Canvas: {warning}" for warning in end_warnings)
-        if end_layout["canvas"]["aspect_ratio"] != layout["canvas"]["aspect_ratio"]:
-            warnings.append(
-                "Start and End Canvas aspect ratios differ; normalized coordinates are still used but trajectory reliability may decrease."
-            )
-
-    elements, layout_entries, sequence_items = _build_elements(
-        layout, config, end_layout, warnings
-    )
+    elements, layout_entries, sequence_items = _build_elements(layout, config, warnings)
     if not elements:
         warnings.append("No active element had both a Canvas box and usable prompt content.")
 
@@ -400,61 +317,32 @@ def compile_h3_prompt(
     if sequence_items:
         motion["sequence"] = [item["action"] for item in sequence_items]
     if any("start_bbox" in entry for entry in layout_entries):
-        motion["instruction"] = (
-            "Follow each element's start_bbox and end_bbox as a soft spatial trajectory. "
-            "Transition smoothly while preserving element identity and the overall composition."
-        )
+        motion["instruction"] = "Follow each element's start_bbox and end_bbox as soft spatial trajectory anchors. Transition smoothly while preserving identity and the overall composition."
     elif sequence_items:
-        motion["instruction"] = (
-            "Animate complete elements according to their semantic animation settings and sequence. "
-            "Keep each completed element stable in its defined layout region."
-        )
-    else:
-        motion["instruction"] = (
-            "Preserve the established spatial layout with only scene-appropriate natural motion."
-        )
+        motion["instruction"] = "Animate complete elements according to their semantic animation settings and order. Keep completed elements stable in their defined layout regions."
 
     exact_texts = [item["text"] for item in elements if item.get("type") == "text" and item.get("text")]
     constraints: dict[str, Any] = {}
     if config.get("full_frame", True):
-        constraints["full_frame"] = True
-        constraints["no_letterboxing"] = True
-        constraints["no_blank_margins"] = True
+        constraints.update({"full_frame": True, "no_letterboxing": True, "no_blank_margins": True})
     if exact_texts and config.get("exact_text_safety", True):
         constraints["exact_visible_text"] = exact_texts
         constraints["allow_additional_text"] = bool(config.get("allow_additional_text", False))
 
-    model_elements = _model_elements(elements)
     base_structure: dict[str, Any] = {
         "aspect_ratio": layout["canvas"]["aspect_ratio"],
         "high_level_description": scene,
-        "layout": {
-            "coordinate_space": "normalized_0_1000",
-            "bbox_format": "xyxy",
-            "boxes": layout_entries,
-        },
-        "elements": model_elements,
+        "layout": {"coordinate_space": "normalized_0_1000", "bbox_format": "xyxy", "boxes": layout_entries},
+        "elements": _model_elements(elements),
         "motion": motion,
     }
     if constraints:
         base_structure["constraints"] = constraints
+    model_structure = _convert_qwen_unified(base_structure, layout_entries, elements) if config["schema_profile"] == "qwen_unified_bbox2d" else base_structure
 
-    if config["schema_profile"] == "qwen_unified_bbox2d":
-        model_structure = _convert_qwen_unified(base_structure, layout_entries, elements)
-    else:
-        model_structure = base_structure
-
-    summary_lines = _resolved_summary(
-        layout,
-        end_layout,
-        config,
-        elements,
-        layout_entries,
-        sequence_items,
-    )
+    summary_lines = _resolved_summary(config, elements, layout_entries, sequence_items)
     summary = "\n".join(summary_lines).strip()
     json_text = dumps_compact(model_structure)
-
     compiler_mode = config["compiler_mode"]
     if compiler_mode == "json_only":
         body = json_text
@@ -470,18 +358,21 @@ def compile_h3_prompt(
             f"non_diegetic_music: {config.get('music') or 'N/A'}"
         )
     else:
-        prompt = body
+        audio_lines: list[str] = []
+        if config.get("soundscape"):
+            audio_lines.append(f"Soundscape: {config['soundscape']}")
+        if config.get("music"):
+            audio_lines.append(f"Non-diegetic music: {config['music']}")
+        prompt = body if not audio_lines else f"{body}\n\n" + "\n".join(audio_lines)
 
     structure = {
         "schema": STRUCTURE_SCHEMA,
         "package_version": PACKAGE_VERSION,
         "layout": layout,
-        "end_layout": end_layout,
         "config": config,
         "model_structure": model_structure,
         "resolved_summary": summary_lines,
         "warnings": warnings,
         "prompt": prompt,
     }
-    debug = dumps_pretty(structure)
-    return prompt, structure, debug
+    return prompt, structure, dumps_pretty(structure)

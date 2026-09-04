@@ -1,7 +1,150 @@
 {
-  "layout": {"canvas":{"width":768,"height":1344,"grid":"thirds"},"boxes":[{"slot":"a","bbox_2d":[60,180,360,900]},{"slot":"b","bbox_2d":[640,180,940,900]}]},
-  "config": {"schema":"h3_structured_prompt_config/0.9","ui_language":"auto","scene_description":"A realistic cinematic park scene with two young adults visible in the same portrait frame, natural afternoon light, full-body composition.","duration_seconds":5.0,"compiler_mode":"hybrid","output_format":"direct","schema_profile":"verified_split_bbox","reinforcement":"balanced","exact_text_safety":true,"allow_additional_text":false,"slots":{"a":{"slot":"a","enabled":true,"type":"subject","description":"A young adult woman with long dark hair, wearing a casual jacket and dark trousers.","exact_text":"","motion":"start_end","value":null,"phase":1,"custom_behavior":""},"b":{"slot":"b","enabled":true,"type":"subject","description":"A young adult man with short dark hair, wearing a casual jacket and dark trousers.","exact_text":"","motion":"start_end","value":null,"phase":1,"custom_behavior":""},"c":{"slot":"c","enabled":true,"type":"object","description":"","exact_text":"","motion":"static","value":null,"phase":3,"custom_behavior":""},"d":{"slot":"d","enabled":true,"type":"object","description":"","exact_text":"","motion":"static","value":null,"phase":4,"custom_behavior":""},"e":{"slot":"e","enabled":true,"type":"object","description":"","exact_text":"","motion":"static","value":null,"phase":5,"custom_behavior":""}},"camera":{"motion":"Static Shot","speed":"auto","amplitude":"auto"},"soundscape":"","music":"","custom_instruction":""},
-  "end_layout": {"canvas":{"width":768,"height":1344,"grid":"thirds"},"boxes":[{"slot":"a","bbox_2d":[640,180,940,900]},{"slot":"b","bbox_2d":[60,180,360,900]}]},
-  "compiled_prompt": "{\"aspect_ratio\":\"9:16\",\"high_level_description\":\"A realistic cinematic park scene with two young adults visible in the same portrait frame, natural afternoon light, full-body composition.\",\"layout\":{\"coordinate_space\":\"normalized_0_1000\",\"bbox_format\":\"xyxy\",\"boxes\":[{\"slot\":\"subject_a\",\"start_bbox\":[60,180,360,900],\"end_bbox\":[640,180,940,900]},{\"slot\":\"subject_b\",\"start_bbox\":[640,180,940,900],\"end_bbox\":[60,180,360,900]}]},\"elements\":[{\"id\":\"subject_a\",\"type\":\"subject\",\"desc\":\"A young adult woman with long dark hair, wearing a casual jacket and dark trousers.\"},{\"id\":\"subject_b\",\"type\":\"subject\",\"desc\":\"A young adult man with short dark hair, wearing a casual jacket and dark trousers.\"}],\"motion\":{\"camera\":\"Static Shot\",\"sequence\":[\"subject_a transitions smoothly from its start_bbox to its end_bbox while preserving identity.\",\"subject_b transitions smoothly from its start_bbox to its end_bbox while preserving identity.\"],\"instruction\":\"Follow each element's start_bbox and end_bbox as a soft spatial trajectory. Transition smoothly while preserving element identity and the overall composition.\"}}\n\nResolved layout and motion:\nTreat every element ID as a stable identity and preserve its assigned spatial region.\nsubject_a moves from the left region to the right region over the clip.\nsubject_b moves from the right region to the left region over the clip.\nMotion order:\n1. subject_a transitions smoothly from its start_bbox to its end_bbox while preserving identity.\n2. subject_b transitions smoothly from its start_bbox to its end_bbox while preserving identity.\nUse the approximately 5-second clip as a soft duration target; exact frame timing is not required.\nThe camera holds a static shot.",
+  "layout": {
+    "schema": "h3_structured_canvas/0.9",
+    "canvas": {
+      "width": 768,
+      "height": 1344,
+      "aspect_ratio": "9:16",
+      "coordinate_space": "normalized_0_1000",
+      "bbox_format": "xyxy",
+      "grid": "thirds",
+      "show_boxes": true,
+      "active_slot": "a"
+    },
+    "boxes": [
+      {
+        "slot": "a",
+        "ui_color": "red",
+        "bbox_2d": [
+          60,
+          180,
+          360,
+          900
+        ]
+      },
+      {
+        "slot": "b",
+        "ui_color": "blue",
+        "bbox_2d": [
+          640,
+          180,
+          940,
+          900
+        ]
+      }
+    ],
+    "transition": {
+      "end_canvas": {
+        "width": 768,
+        "height": 1344,
+        "aspect_ratio": "9:16",
+        "coordinate_space": "normalized_0_1000",
+        "bbox_format": "xyxy",
+        "grid": "thirds",
+        "show_boxes": true,
+        "active_slot": "a"
+      },
+      "end_boxes": [
+        {
+          "slot": "a",
+          "ui_color": "red",
+          "bbox_2d": [
+            640,
+            180,
+            940,
+            900
+          ]
+        },
+        {
+          "slot": "b",
+          "ui_color": "blue",
+          "bbox_2d": [
+            60,
+            180,
+            360,
+            900
+          ]
+        }
+      ]
+    }
+  },
+  "config": {
+    "schema": "h3_structured_prompt_config/0.9",
+    "ui_language": "auto",
+    "scene_description": "A realistic cinematic park scene with two young adults visible in the same portrait frame, natural afternoon light, full-body composition.",
+    "compiler_mode": "hybrid",
+    "output_format": "direct",
+    "schema_profile": "verified_split_bbox",
+    "reinforcement": "balanced",
+    "exact_text_safety": true,
+    "allow_additional_text": false,
+    "full_frame": true,
+    "slots": {
+      "a": {
+        "slot": "a",
+        "enabled": true,
+        "type": "subject",
+        "description": "A young adult woman with long dark hair, wearing a casual jacket and dark trousers.",
+        "exact_text": "",
+        "motion": "start_end",
+        "value": null,
+        "order": 1,
+        "custom_behavior": ""
+      },
+      "b": {
+        "slot": "b",
+        "enabled": true,
+        "type": "subject",
+        "description": "A young adult man with short dark hair, wearing a casual jacket and dark trousers.",
+        "exact_text": "",
+        "motion": "start_end",
+        "value": null,
+        "order": 1,
+        "custom_behavior": ""
+      },
+      "c": {
+        "slot": "c",
+        "enabled": true,
+        "type": "object",
+        "description": "",
+        "exact_text": "",
+        "motion": "none",
+        "value": null,
+        "order": 3,
+        "custom_behavior": ""
+      },
+      "d": {
+        "slot": "d",
+        "enabled": true,
+        "type": "object",
+        "description": "",
+        "exact_text": "",
+        "motion": "none",
+        "value": null,
+        "order": 4,
+        "custom_behavior": ""
+      },
+      "e": {
+        "slot": "e",
+        "enabled": true,
+        "type": "object",
+        "description": "",
+        "exact_text": "",
+        "motion": "none",
+        "value": null,
+        "order": 5,
+        "custom_behavior": ""
+      }
+    },
+    "camera": {
+      "motion": "Static Shot",
+      "speed": "auto",
+      "amplitude": "auto"
+    },
+    "soundscape": "",
+    "music": "",
+    "custom_instruction": ""
+  },
+  "compiled_prompt": "{\"aspect_ratio\":\"9:16\",\"high_level_description\":\"A realistic cinematic park scene with two young adults visible in the same portrait frame, natural afternoon light, full-body composition.\",\"layout\":{\"coordinate_space\":\"normalized_0_1000\",\"bbox_format\":\"xyxy\",\"boxes\":[{\"slot\":\"subject_a\",\"start_bbox\":[60,180,360,900],\"end_bbox\":[640,180,940,900]},{\"slot\":\"subject_b\",\"start_bbox\":[640,180,940,900],\"end_bbox\":[60,180,360,900]}]},\"elements\":[{\"id\":\"subject_a\",\"type\":\"obj\",\"desc\":\"A young adult woman with long dark hair, wearing a casual jacket and dark trousers.\"},{\"id\":\"subject_b\",\"type\":\"obj\",\"desc\":\"A young adult man with short dark hair, wearing a casual jacket and dark trousers.\"}],\"motion\":{\"camera\":\"Static Shot\",\"sequence\":[\"subject_a transitions smoothly from its start_bbox to its end_bbox while preserving identity.\",\"subject_b transitions smoothly from its start_bbox to its end_bbox while preserving identity.\"],\"instruction\":\"Follow each element's start_bbox and end_bbox as soft spatial trajectory anchors. Transition smoothly while preserving identity and the overall composition.\"},\"constraints\":{\"full_frame\":true,\"no_letterboxing\":true,\"no_blank_margins\":true}}\n\nResolved layout and motion:\nTreat every element ID as a stable identity and preserve its assigned spatial region.\nsubject_a moves from the left region to the right region over the clip.\nsubject_b moves from the right region to the left region over the clip.\nMotion order:\n1. subject_a transitions smoothly from its start_bbox to its end_bbox while preserving identity.\n2. subject_b transitions smoothly from its start_bbox to its end_bbox while preserving identity.\nUse the full canvas area. Do not add letterboxing, blank margins, an inset frame, or decorative borders.\nThe camera holds a static shot.",
   "validation_warnings": []
 }

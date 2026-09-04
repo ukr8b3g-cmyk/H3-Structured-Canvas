@@ -1,0 +1,136 @@
+{
+  "layout": {
+    "schema": "h3_structured_canvas/0.9",
+    "canvas": {
+      "width": 640,
+      "height": 640,
+      "aspect_ratio": "1:1",
+      "coordinate_space": "normalized_0_1000",
+      "bbox_format": "xyxy",
+      "grid": "thirds",
+      "show_boxes": true,
+      "active_slot": "a"
+    },
+    "boxes": [
+      {
+        "slot": "a",
+        "ui_color": "red",
+        "bbox_2d": [
+          150,
+          100,
+          850,
+          230
+        ]
+      },
+      {
+        "slot": "b",
+        "ui_color": "blue",
+        "bbox_2d": [
+          200,
+          280,
+          800,
+          820
+        ]
+      },
+      {
+        "slot": "c",
+        "ui_color": "yellow",
+        "bbox_2d": [
+          350,
+          450,
+          650,
+          620
+        ]
+      },
+      {
+        "slot": "d",
+        "ui_color": "green",
+        "bbox_2d": [
+          250,
+          850,
+          750,
+          940
+        ]
+      }
+    ]
+  },
+  "config": {
+    "schema": "h3_structured_prompt_config/0.9",
+    "ui_language": "auto",
+    "scene_description": "A clean minimal animated infographic on a plain light background.",
+    "compiler_mode": "hybrid",
+    "output_format": "direct",
+    "schema_profile": "verified_split_bbox",
+    "reinforcement": "balanced",
+    "exact_text_safety": true,
+    "allow_additional_text": false,
+    "full_frame": true,
+    "slots": {
+      "a": {
+        "slot": "a",
+        "enabled": true,
+        "type": "text",
+        "description": "Bold uppercase infographic headline.",
+        "exact_text": "PROJECT COMPLETE",
+        "motion": "fade_in",
+        "value": null,
+        "order": 1,
+        "custom_behavior": ""
+      },
+      "b": {
+        "slot": "b",
+        "enabled": true,
+        "type": "graphic",
+        "description": "A clean circular progress chart showing seventy-five percent completion.",
+        "exact_text": "",
+        "motion": "radial_fill",
+        "value": 75.0,
+        "order": 2,
+        "custom_behavior": ""
+      },
+      "c": {
+        "slot": "c",
+        "enabled": true,
+        "type": "text",
+        "description": "Very large bold percentage value centered inside the chart.",
+        "exact_text": "75%",
+        "motion": "scale_up",
+        "value": null,
+        "order": 3,
+        "custom_behavior": ""
+      },
+      "d": {
+        "slot": "d",
+        "enabled": true,
+        "type": "text",
+        "description": "Clean bold uppercase label.",
+        "exact_text": "COMPLETED",
+        "motion": "fade_in",
+        "value": null,
+        "order": 4,
+        "custom_behavior": ""
+      },
+      "e": {
+        "slot": "e",
+        "enabled": false,
+        "type": "object",
+        "description": "",
+        "exact_text": "",
+        "motion": "none",
+        "value": null,
+        "order": 5,
+        "custom_behavior": ""
+      }
+    },
+    "camera": {
+      "motion": "Static Shot",
+      "speed": "auto",
+      "amplitude": "auto"
+    },
+    "soundscape": "",
+    "music": "",
+    "custom_instruction": ""
+  },
+  "compiled_prompt": "{\"aspect_ratio\":\"1:1\",\"high_level_description\":\"A clean minimal animated infographic on a plain light background.\",\"layout\":{\"coordinate_space\":\"normalized_0_1000\",\"bbox_format\":\"xyxy\",\"boxes\":[{\"slot\":\"text_a\",\"bbox\":[150,100,850,230]},{\"slot\":\"graphic_b\",\"bbox\":[200,280,800,820]},{\"slot\":\"text_c\",\"bbox\":[350,450,650,620]},{\"slot\":\"text_d\",\"bbox\":[250,850,750,940]}]},\"elements\":[{\"id\":\"text_a\",\"type\":\"text\",\"desc\":\"Bold uppercase infographic headline.\",\"text\":\"PROJECT COMPLETE\",\"animation\":{\"effect\":\"fade_in\",\"behavior\":\"The complete text block \\\"PROJECT COMPLETE\\\" fades in and remains stable.\"}},{\"id\":\"graphic_b\",\"type\":\"graphic\",\"desc\":\"A clean circular progress chart showing seventy-five percent completion.\",\"value\":75,\"animation\":{\"effect\":\"radial_fill\",\"value\":75,\"behavior\":\"The complete graphic_b fills smoothly around its circle from zero to 75 percent.\"}},{\"id\":\"text_c\",\"type\":\"text\",\"desc\":\"Very large bold percentage value centered inside the chart.\",\"text\":\"75%\",\"animation\":{\"effect\":\"scale_up\",\"behavior\":\"The complete text block \\\"75%\\\" grows smoothly from small scale to its defined size and remains stable.\"}},{\"id\":\"text_d\",\"type\":\"text\",\"desc\":\"Clean bold uppercase label.\",\"text\":\"COMPLETED\",\"animation\":{\"effect\":\"fade_in\",\"behavior\":\"The complete text block \\\"COMPLETED\\\" fades in and remains stable.\"}}],\"motion\":{\"camera\":\"Static Shot\",\"sequence\":[\"The complete text block \\\"PROJECT COMPLETE\\\" fades in and remains stable.\",\"The complete graphic_b fills smoothly around its circle from zero to 75 percent.\",\"The complete text block \\\"75%\\\" grows smoothly from small scale to its defined size and remains stable.\",\"The complete text block \\\"COMPLETED\\\" fades in and remains stable.\"],\"instruction\":\"Animate complete elements according to their semantic animation settings and order. Keep completed elements stable in their defined layout regions.\"},\"constraints\":{\"full_frame\":true,\"no_letterboxing\":true,\"no_blank_margins\":true,\"exact_visible_text\":[\"PROJECT COMPLETE\",\"75%\",\"COMPLETED\"],\"allow_additional_text\":false}}\n\nResolved layout and motion:\nTreat every element ID as a stable identity and preserve its assigned spatial region.\ntext block \"PROJECT COMPLETE\" occupies the center region.\ngraphic_b occupies the center region.\ntext block \"75%\" occupies the center region.\ntext block \"COMPLETED\" occupies the center region.\ngraphic_b appears substantially larger than text_d.\nMotion order:\n1. The complete text block \"PROJECT COMPLETE\" fades in and remains stable.\n2. The complete graphic_b fills smoothly around its circle from zero to 75 percent.\n3. The complete text block \"75%\" grows smoothly from small scale to its defined size and remains stable.\n4. The complete text block \"COMPLETED\" fades in and remains stable.\nPreserve the exact visible text: \"PROJECT COMPLETE\", \"75%\", \"COMPLETED\".\nDo not display element IDs, JSON keys, metadata, instructions, animation names, or any additional words on screen.\nUse the full canvas area. Do not add letterboxing, blank margins, an inset frame, or decorative borders.\nThe camera holds a static shot.",
+  "validation_warnings": []
+}

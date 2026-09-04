@@ -10,6 +10,8 @@ from .schema import PACKAGE_VERSION
 __version__ = PACKAGE_VERSION
 _PRESET_ROOT = Path(__file__).resolve().parents[1] / "user_presets"
 
+# Route registration is optional so the package can be imported by unit tests
+# without a running ComfyUI server.
 try:
     from aiohttp import web
     from server import PromptServer
@@ -30,7 +32,12 @@ try:
         kind = request.match_info.get("kind", "")
         try:
             body = await request.json()
-            presets = save_preset(_PRESET_ROOT, kind, body.get("name"), body.get("data"))
+            presets = save_preset(
+                _PRESET_ROOT,
+                kind,
+                body.get("name"),
+                body.get("data"),
+            )
         except (ValueError, TypeError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
         except Exception:
@@ -51,4 +58,9 @@ try:
 except Exception:
     pass
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "__version__"]
+
+__all__ = [
+    "NODE_CLASS_MAPPINGS",
+    "NODE_DISPLAY_NAME_MAPPINGS",
+    "__version__",
+]

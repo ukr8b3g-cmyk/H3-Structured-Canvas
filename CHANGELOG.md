@@ -1,30 +1,32 @@
 # Changelog
 
+## 0.9.2-beta.3
+
+- Removed Duration/length control from Structured Prompter. Generation duration now belongs to Core H3 / Continuum.
+- Simplified public sockets:
+  - Canvas: `layout / width / height`
+  - Prompter: `prompt`
+- Removed public `layout_json / H3_STRUCTURE / JSON_DEBUG` sockets.
+- Moved Start/End handling into new `H3 Layout Transition` helper node.
+- Motion default changed from `Static` to `None`.
+- Added explicit `Hold Position` separate from no motion instruction.
+- Added semantic movement in four directions and top/bottom slide-in options.
+- Renamed UI `Phase` to `Order`; shown only when an ordered animation needs it.
+- Exact Text is shown only for Text elements.
+- Value is shown only for value-driven Graphic effects.
+- Description box expanded and Type/Motion/Order moved into a compact adjacent row.
+- Split optional audio, extra prompt options, and developer/experimental controls into clear collapsed sections.
+- Hardened hidden native widget handling to prevent raw JSON text bleeding through the custom UI.
+- Made DOM widget height track node resize to prevent the UI from extending below the node body.
+- Preserved legacy workflow migration for `Auto`, `Static`, `Phase`, `slide_up`, and `slide_down`.
+- Subject/Object authoring categories continue to compile to model-facing `type:"obj"`.
+
 ## 0.9.1-beta.2
 
-- Added real H3 `length` output derived from Duration (`17k + 5` frame grid at 24fps)
-- Model-facing Subject/Object now serialize as verified `type: "obj"`
-- Auto fallback treats A/B as Subject and C-E as Object for old saved workflows
-- Added full-frame / no-letterbox prompt reinforcement
-- Compact conditional Prompter UI: Exact Text, Value and Phase appear only when relevant
-- Removed Auto from the normal Type selector while retaining backward compatibility
-- Canonical GitHub repository is now the update source
+- Added model-facing Subject/Object compatibility mapping to `type:"obj"`.
+- Added full-frame/no-letterbox reinforcement.
+- Added initial length conversion experiment (removed again in 0.9.2 for Continuum compatibility).
 
 ## 0.9.0-beta.1
 
-- Initial standalone package
-- Interactive five-slot normalized BBOX Canvas
-- Canvas draw/move/resize/delete operations
-- Resolution, grid, built-in and custom presets
-- Optional external width/height override
-- Structured Prompter for Subject/Object/Text/Graphic
-- Exact Text guard and additional-text suppression
-- Static, Start-End, semantic text and infographic motion modes
-- Ordered motion phases and H3 camera presets
-- Direct and H3 Context Envelope output formats
-- Verified `bbox` and Experimental Qwen `bbox_2d` schema profiles
-- Hybrid JSON + resolved natural-language compiler
-- JSON debug and typed structure outputs
-- Atomic server-side preset storage with localStorage fallback
-- Python input validation, length limits, coordinate clamping, warnings
-- 20 unit tests, 15 motion subtests, JavaScript syntax validation, frontend registration smoke validation, and ComfyUI import smoke validation
+- Initial test release.

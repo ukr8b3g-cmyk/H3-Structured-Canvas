@@ -5,33 +5,109 @@
     {
       "id": 1,
       "type": "H3StructuredCanvas",
-      "pos": [80, 80],
-      "size": [760, 900],
+      "pos": [
+        80,
+        80
+      ],
+      "size": [
+        760,
+        900
+      ],
       "flags": {},
       "order": 0,
       "mode": 0,
-      "inputs": [{"name":"width","type":"INT","link":null},{"name":"height","type":"INT","link":null}],
-      "outputs": [{"name":"layout","type":"H3_LAYOUT","links":[1],"slot_index":0},{"name":"layout_json","type":"STRING","links":null,"slot_index":1},{"name":"width","type":"INT","links":null,"slot_index":2},{"name":"height","type":"INT","links":null,"slot_index":3}],
-      "properties": {"Node name for S&R":"H3StructuredCanvas"},
-      "widgets_values": [640,640,"{\"schema\":\"h3_structured_canvas/0.9\",\"canvas\":{\"width\":640,\"height\":640,\"aspect_ratio\":\"1:1\",\"coordinate_space\":\"normalized_0_1000\",\"bbox_format\":\"xyxy\",\"grid\":\"thirds\",\"show_boxes\":true,\"active_slot\":\"a\"},\"boxes\":[{\"slot\":\"a\",\"ui_color\":\"red\",\"bbox_2d\":[150,100,850,230]},{\"slot\":\"b\",\"ui_color\":\"blue\",\"bbox_2d\":[200,280,800,820]},{\"slot\":\"c\",\"ui_color\":\"yellow\",\"bbox_2d\":[350,450,650,620]},{\"slot\":\"d\",\"ui_color\":\"green\",\"bbox_2d\":[250,850,750,940]}]}"]
+      "inputs": [
+        {
+          "name": "width",
+          "type": "INT",
+          "link": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "layout",
+          "type": "H3_LAYOUT",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": null,
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "H3StructuredCanvas"
+      },
+      "widgets_values": [
+        640,
+        640,
+        "{\"schema\":\"h3_structured_canvas/0.9\",\"canvas\":{\"width\":640,\"height\":640,\"aspect_ratio\":\"1:1\",\"coordinate_space\":\"normalized_0_1000\",\"bbox_format\":\"xyxy\",\"grid\":\"thirds\",\"show_boxes\":true,\"active_slot\":\"a\"},\"boxes\":[{\"slot\":\"a\",\"ui_color\":\"red\",\"bbox_2d\":[80,120,420,940]},{\"slot\":\"b\",\"ui_color\":\"blue\",\"bbox_2d\":[600,120,920,940]}]}"
+      ]
     },
     {
       "id": 2,
       "type": "H3StructuredPrompter",
-      "pos": [900,80],
-      "size": [650,920],
+      "pos": [
+        900,
+        80
+      ],
+      "size": [
+        650,
+        880
+      ],
       "flags": {},
       "order": 1,
       "mode": 0,
-      "inputs": [{"name":"layout","type":"H3_LAYOUT","link":1},{"name":"end_layout","type":"H3_LAYOUT","link":null}],
-      "outputs": [{"name":"h3_prompt","type":"STRING","links":null,"slot_index":0},{"name":"h3_structure","type":"H3_STRUCTURE","links":null,"slot_index":1},{"name":"json_debug","type":"STRING","links":null,"slot_index":2}],
-      "properties": {"Node name for S&R":"H3StructuredPrompter"},
-      "widgets_values": ["{\"schema\":\"h3_structured_prompt_config/0.9\",\"ui_language\":\"auto\",\"scene_description\":\"A clean minimal animated infographic on a plain light background.\",\"duration_seconds\":5.0,\"compiler_mode\":\"hybrid\",\"output_format\":\"direct\",\"schema_profile\":\"verified_split_bbox\",\"reinforcement\":\"balanced\",\"exact_text_safety\":true,\"allow_additional_text\":false,\"slots\":{\"a\":{\"slot\":\"a\",\"enabled\":true,\"type\":\"text\",\"description\":\"Bold uppercase infographic headline.\",\"exact_text\":\"PROJECT COMPLETE\",\"motion\":\"fade_in\",\"value\":null,\"phase\":1,\"custom_behavior\":\"\"},\"b\":{\"slot\":\"b\",\"enabled\":true,\"type\":\"graphic\",\"description\":\"A clean circular progress chart showing seventy-five percent completion.\",\"exact_text\":\"\",\"motion\":\"radial_fill\",\"value\":75,\"phase\":2,\"custom_behavior\":\"\"},\"c\":{\"slot\":\"c\",\"enabled\":true,\"type\":\"text\",\"description\":\"Very large bold percentage value centered inside the chart.\",\"exact_text\":\"75%\",\"motion\":\"scale_up\",\"value\":null,\"phase\":3,\"custom_behavior\":\"\"},\"d\":{\"slot\":\"d\",\"enabled\":true,\"type\":\"text\",\"description\":\"Clean bold uppercase label.\",\"exact_text\":\"COMPLETED\",\"motion\":\"fade_in\",\"value\":null,\"phase\":4,\"custom_behavior\":\"\"},\"e\":{\"slot\":\"e\",\"enabled\":false,\"type\":\"object\",\"description\":\"\",\"exact_text\":\"\",\"motion\":\"static\",\"value\":null,\"phase\":5,\"custom_behavior\":\"\"}},\"camera\":{\"motion\":\"Static Shot\",\"speed\":\"auto\",\"amplitude\":\"auto\"},\"soundscape\":\"\",\"music\":\"\",\"custom_instruction\":\"\"}"]
+      "inputs": [
+        {
+          "name": "layout",
+          "type": "H3_LAYOUT",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "H3StructuredPrompter"
+      },
+      "widgets_values": [
+        "{\"schema\":\"h3_structured_prompt_config/0.9\",\"ui_language\":\"auto\",\"scene_description\":\"A realistic cinematic park scene with two young adults.\",\"compiler_mode\":\"hybrid\",\"output_format\":\"direct\",\"schema_profile\":\"verified_split_bbox\",\"reinforcement\":\"balanced\",\"exact_text_safety\":true,\"allow_additional_text\":false,\"full_frame\":true,\"slots\":{\"a\":{\"slot\":\"a\",\"enabled\":true,\"type\":\"subject\",\"description\":\"A young adult woman with long dark hair, full-body view.\",\"exact_text\":\"\",\"motion\":\"none\",\"value\":null,\"order\":1,\"custom_behavior\":\"\"},\"b\":{\"slot\":\"b\",\"enabled\":true,\"type\":\"subject\",\"description\":\"A young adult man with short dark hair, full-body view.\",\"exact_text\":\"\",\"motion\":\"none\",\"value\":null,\"order\":2,\"custom_behavior\":\"\"},\"c\":{\"slot\":\"c\",\"enabled\":true,\"type\":\"object\",\"description\":\"\",\"exact_text\":\"\",\"motion\":\"none\",\"value\":null,\"order\":3,\"custom_behavior\":\"\"},\"d\":{\"slot\":\"d\",\"enabled\":true,\"type\":\"object\",\"description\":\"\",\"exact_text\":\"\",\"motion\":\"none\",\"value\":null,\"order\":4,\"custom_behavior\":\"\"},\"e\":{\"slot\":\"e\",\"enabled\":true,\"type\":\"object\",\"description\":\"\",\"exact_text\":\"\",\"motion\":\"none\",\"value\":null,\"order\":5,\"custom_behavior\":\"\"}},\"camera\":{\"motion\":\"Static Shot\",\"speed\":\"auto\",\"amplitude\":\"auto\"},\"soundscape\":\"\",\"music\":\"\",\"custom_instruction\":\"\"}"
+      ]
     }
   ],
-  "links": [[1,1,0,2,0,"H3_LAYOUT"]],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "H3_LAYOUT"
+    ]
+  ],
   "groups": [],
   "config": {},
-  "extra": {"ds":{"scale":0.75,"offset":[30,30]}},
+  "extra": {},
   "version": 0.4
 }
