@@ -4,7 +4,7 @@
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/ukr8b3g-cmyk/-H3-Structured-Canvas.git ComfyUI-H3-Structured-Canvas
+git clone https://github.com/ukr8b3g-cmyk/H3-Structured-Canvas.git ComfyUI-H3-Structured-Canvas
 ```
 
 更新時:
@@ -18,8 +18,7 @@ git pull
 
 ## ZIPから導入
 
-1. `ComfyUI-H3-Structured-Canvas-0.9.0-beta1.zip` を解凍します。
-2. フォルダ構造が次になるように配置します。
+GitHub運用を推奨します。ZIPを使う場合は、フォルダ構造が次になるように配置します。
 
 ```text
 ComfyUI/
@@ -34,8 +33,7 @@ ComfyUI/
          └─ h3_structured_canvas.js
 ```
 
-3. ComfyUIを完全に終了して再起動します。
-4. ノード検索で以下を確認します。
+ComfyUIを完全に終了して再起動し、ノード検索で以下を確認します。
 
 ```text
 🧭 H3 Structured Canvas
@@ -50,9 +48,7 @@ MiniMax H3 / Structured Prompt
 
 ## 更新
 
-旧フォルダへ上書きする場合は、ComfyUIを停止してから行ってください。
-
-ユーザープリセットを残す場合は、更新前に次を退避します。
+ユーザープリセットを残す場合は、更新前に次を退避できます。
 
 ```text
 user_presets/canvas_presets.json
@@ -65,15 +61,17 @@ user_presets/prompter_presets.json
 
 ComfyUI起動ログで `ComfyUI-H3-Structured-Canvas` のimport errorを確認してください。Python 3.10以降を想定しています。
 
-### UIが通常Widgetのまま表示される
+### UIが古いまま表示される
 
-ブラウザを強制再読込してください。
+`git pull` 後にComfyUIを完全再起動し、ブラウザを強制再読込してください。
 
 ```text
 Ctrl + F5
 ```
 
-Frontendキャッシュが残る場合はComfyUIを停止し、ブラウザタブを閉じてから再起動します。
+### Durationを5秒にしたのにCore H3側が変わらない
+
+Prompterの `length` 出力をCore MiniMax H3の `length` 入力へ接続してください。5秒はH3の `17k+5` グリッドに合わせて124 framesになります。
 
 ### Presetを保存できない
 
