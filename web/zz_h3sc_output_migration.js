@@ -3,7 +3,7 @@ const app = appModule?.app ?? appModule;
 
 const CANVAS_NODE = "H3StructuredCanvas";
 const PROMPTER_NODE = "H3StructuredPrompter";
-const EXTENSION_NAME = "h3.structured.canvas.legacy_output_migration.v1";
+const EXTENSION_NAME = "h3.structured.canvas.legacy_output_migration.v2";
 
 function graphLink(id) {
   const links = app?.graph?.links;
@@ -58,21 +58,33 @@ function remapOriginSlots(node, dropSlots, slotMap) {
   }
 }
 
+function publicOutput(output, name, type, links) {
+  // Never spread modern ComfyUI slot objects here. Newer slot instances carry
+  // internal references such as `_node`, which must not leak into workflow JSON.
+  // Keep the live node output descriptor intentionally minimal and serialisable.
+  return {
+    name,
+    type,
+    links: links.filter((id) => graphLink(id)),
+  };
+}
+
 function migrateLegacyCanvasOutputs(node) {
   const outputs = node?.outputs;
   if (!isLegacyCanvas(outputs)) return false;
   if (!allLinksReady(outputs)) return false;
 
   const [layout, legacyJson, width, height] = outputs;
+  const layoutLinks = outputLinks(layout);
   const widthLinks = outputLinks(width);
   const heightLinks = outputLinks(height);
 
   remapOriginSlots(node, [1], { 2: 1, 3: 2 });
 
   node.outputs = [
-    { ...layout, name: "layout", type: "H3_LAYOUT", links: outputLinks(layout).filter((id) => graphLink(id)) },
-    { ...width, name: "width", type: "INT", links: widthLinks.filter((id) => graphLink(id)) },
-    { ...height, name: "height", type: "INT", links: heightLinks.filter((id) => graphLink(id)) },
+    publicOutput(layout, "layout", "H3_LAYOUT", layoutLinks),
+    publicOutput(width, "width", "INT", widthLinks),
+    publicOutput(height, "height", "INT", heightLinks),
   ];
   node.setDirtyCanvas?.(true, true);
   app?.graph?.setDirtyCanvas?.(true, true);
@@ -86,9 +98,10 @@ function migrateLegacyPrompterOutputs(node) {
   if (!allLinksReady(outputs)) return false;
 
   const prompt = outputs[0];
+  const promptLinks = outputLinks(prompt);
   remapOriginSlots(node, [1, 2, 3], {});
 
-  node.outputs = [{ ...prompt, name: "prompt", type: "STRING", links: outputLinks(prompt).filter((id) => graphLink(id)) }];
+  node.outputs = [publicOutput(prompt, "prompt", "STRING", promptLinks)];
   node.setDirtyCanvas?.(true, true);
   app?.graph?.setDirtyCanvas?.(true, true);
   app?.graph?.change?.();
@@ -115,8 +128,8 @@ if (app?.registerExtension) {
     name: EXTENSION_NAME,
     beforeRegisterNodeDef(nodeType, nodeData) {
       if (![CANVAS_NODE, PROMPTER_NODE].includes(nodeData.name)) return;
-      if (nodeType.prototype.__h3scLegacyOutputsV1) return;
-      nodeType.prototype.__h3scLegacyOutputsV1 = true;
+      if (nodeType.prototype.__h3scLegacyOutputsV2) return;
+      nodeType.prototype.__h3scLegacyOutputsV2 = true;
 
       const oldCreated = nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated = function () {
@@ -137,10 +150,11 @@ if (app?.registerExtension) {
       };
 
       const oldSerialize = nodeType.prototype.onSerialize;
-      nodeType.prototype.onSerialize = function (info) {
+      nodeType.prototype.onSerialize = function () {
+        // Ensure a legacy graph is migrated before the next save/queue, but do
+        // not write live output slot objects into the serialized workflow.
         migrateLegacyOutputs(this, nodeData.name);
         oldSerialize?.apply(this, arguments);
-        if (info && Array.isArray(this.outputs)) info.outputs = this.outputs.map((output) => ({ ...output, links: outputLinks(output) }));
       };
     },
   });
