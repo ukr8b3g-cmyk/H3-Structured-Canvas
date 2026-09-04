@@ -21,6 +21,11 @@ function outputLinks(output) {
   return Array.isArray(output?.links) ? [...output.links] : [];
 }
 
+function allLinksReady(outputs) {
+  const ids = outputs.flatMap(outputLinks);
+  return ids.every((id) => graphLink(id));
+}
+
 function isLegacyCanvas(outputs) {
   return Array.isArray(outputs)
     && outputs.length >= 4
@@ -38,13 +43,14 @@ function isLegacyPrompter(outputs) {
     && outputs[2]?.type === "STRING";
 }
 
-function remapOriginSlots(node, dropSlot, slotMap) {
+function remapOriginSlots(node, dropSlots, slotMap) {
   const links = app?.graph?.links;
   if (!links) return;
   const values = links instanceof Map ? [...links.values()] : Object.values(links);
+  const drops = new Set(dropSlots);
   for (const link of values) {
     if (!link || link.origin_id !== node.id) continue;
-    if (link.origin_slot === dropSlot) {
+    if (drops.has(link.origin_slot)) {
       removeLink(link.id ?? link[0]);
       continue;
     }
@@ -55,19 +61,16 @@ function remapOriginSlots(node, dropSlot, slotMap) {
 function migrateLegacyCanvasOutputs(node) {
   const outputs = node?.outputs;
   if (!isLegacyCanvas(outputs)) return false;
+  if (!allLinksReady(outputs)) return false;
 
   const [layout, legacyJson, width, height] = outputs;
-  const staleLinks = outputLinks(legacyJson);
   const widthLinks = outputLinks(width);
   const heightLinks = outputLinks(height);
 
-  for (const id of staleLinks) removeLink(id);
-  for (const id of widthLinks) { const link = graphLink(id); if (link) link.origin_slot = 1; }
-  for (const id of heightLinks) { const link = graphLink(id); if (link) link.origin_slot = 2; }
-  remapOriginSlots(node, 1, { 2: 1, 3: 2 });
+  remapOriginSlots(node, [1], { 2: 1, 3: 2 });
 
   node.outputs = [
-    { ...layout, name: "layout", type: "H3_LAYOUT", links: outputLinks(layout) },
+    { ...layout, name: "layout", type: "H3_LAYOUT", links: outputLinks(layout).filter((id) => graphLink(id)) },
     { ...width, name: "width", type: "INT", links: widthLinks.filter((id) => graphLink(id)) },
     { ...height, name: "height", type: "INT", links: heightLinks.filter((id) => graphLink(id)) },
   ];
@@ -80,14 +83,12 @@ function migrateLegacyCanvasOutputs(node) {
 function migrateLegacyPrompterOutputs(node) {
   const outputs = node?.outputs;
   if (!isLegacyPrompter(outputs)) return false;
+  if (!allLinksReady(outputs)) return false;
 
   const prompt = outputs[0];
-  for (const output of outputs.slice(1)) for (const id of outputLinks(output)) removeLink(id);
-  remapOriginSlots(node, 1, {});
-  remapOriginSlots(node, 2, {});
-  remapOriginSlots(node, 3, {});
+  remapOriginSlots(node, [1, 2, 3], {});
 
-  node.outputs = [{ ...prompt, name: "prompt", type: "STRING", links: outputLinks(prompt) }];
+  node.outputs = [{ ...prompt, name: "prompt", type: "STRING", links: outputLinks(prompt).filter((id) => graphLink(id)) }];
   node.setDirtyCanvas?.(true, true);
   app?.graph?.setDirtyCanvas?.(true, true);
   app?.graph?.change?.();
@@ -106,6 +107,7 @@ function scheduleMigration(node, nodeName) {
   setTimeout(run, 0);
   setTimeout(run, 100);
   setTimeout(run, 400);
+  setTimeout(run, 1000);
 }
 
 if (app?.registerExtension) {
