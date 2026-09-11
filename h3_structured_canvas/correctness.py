@@ -1,9 +1,9 @@
 """Correctness and experimental timeline semantics for H3 Structured Canvas.
 
 This module installs one schema wrapper and one compiler wrapper. Experimental
-START/END offscreen coordinates, trajectory semantics, and overlap relations are
-handled in those same wrappers so behavior is deterministic and not stacked
-through later monkey patches.
+START/MID/END offscreen coordinates, trajectory semantics, and overlap relations
+are handled in those same wrappers so behavior stays deterministic and does not
+regress into stacked monkey patches.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ _OFFSCREEN_MIN = -1000.0
 _OFFSCREEN_MAX = 2000.0
 _STRONG_OVERLAP = 0.60
 _SEPARATE_OVERLAP = 0.08
+_MID_TIME = 0.5
 
 
 def _parse_source(raw: Any) -> dict[str, Any]:
@@ -105,6 +106,18 @@ def _merge_boxes(schema_module: Any, current: Any, loose: dict[str, list[int]]) 
         item.pop("bbox", None)
         by_slot[slot] = item
     return [by_slot[slot] for slot in schema_module.SLOTS if slot in by_slot]
+
+
+def _serialized_boxes(schema_module: Any, box_map: dict[str, list[int]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "slot": slot,
+            "ui_color": schema_module.UI_COLORS.get(slot, "red"),
+            "bbox_2d": list(box_map[slot]),
+        }
+        for slot in schema_module.SLOTS
+        if slot in box_map
+    ]
 
 
 def _is_offscreen_bbox(bbox: list[int]) -> bool:
@@ -408,19 +421,22 @@ def _relation_clause(element_id: str, relation: dict[str, Any]) -> str:
 
 
 def _trajectory_action(element_id: str, trajectory: dict[str, Any]) -> str:
-    base = f"{element_id} transitions smoothly from its start_bbox to its end_bbox while preserving identity."
+    if trajectory.get("mid_bbox") is not None:
+        base = (
+            f"{element_id} follows a two-stage piecewise-linear START to MID to END trajectory while preserving identity. "
+            "During the first half it moves from start_bbox to mid_bbox. During the second half it moves from mid_bbox "
+            "to end_bbox. It must pass through mid_bbox around the temporal midpoint; do not shortcut directly from "
+            "START to END."
+        )
+    else:
+        base = f"{element_id} transitions smoothly from its start_bbox to its end_bbox while preserving identity."
+
     interpretation = trajectory.get("semantic_interpretation")
     ratio = float(trajectory.get("visual_scale_ratio") or 1.0)
     if interpretation == "approach_camera":
-        return (
-            f"{base} It genuinely approaches the camera in depth and naturally becomes larger in frame "
-            f"(about {ratio:.2f}x apparent scale); do not substitute a digital camera zoom."
-        )
+        return f"{base} It genuinely approaches the camera in depth and naturally becomes larger in frame (about {ratio:.2f}x apparent scale); do not substitute a digital camera zoom."
     if interpretation == "recede_camera":
-        return (
-            f"{base} It genuinely moves away from the camera in depth and naturally becomes smaller in frame "
-            f"(about {ratio:.2f}x apparent scale); do not substitute a digital camera zoom."
-        )
+        return f"{base} It genuinely moves away from the camera in depth and naturally becomes smaller in frame (about {ratio:.2f}x apparent scale); do not substitute a digital camera zoom."
     if interpretation == "physical_growth":
         return f"{base} The element itself grows physically, reaching about {ratio:.2f}x apparent scale."
     if interpretation == "physical_shrink":
@@ -432,6 +448,14 @@ def _trajectory_action(element_id: str, trajectory: dict[str, Any]) -> str:
     return base
 
 
+def _segment_summary(label: str, name: str, segment: dict[str, Any] | None) -> str | None:
+    if not isinstance(segment, dict):
+        return None
+    motion = segment.get("screen_motion", "stable")
+    scale = segment.get("scale_change", "stable")
+    return f"{label} {name}: screen motion={motion}, scale change={scale}."
+
+
 def _trajectory_summary_lines(label: str, trajectory: dict[str, Any], reinforcement: str) -> list[str]:
     interpretation = trajectory.get("semantic_interpretation")
     scale_change = trajectory.get("scale_change")
@@ -440,52 +464,49 @@ def _trajectory_summary_lines(label: str, trajectory: dict[str, Any], reinforcem
     anchors = trajectory.get("stable_anchors") or []
     lines: list[str] = []
 
+    if trajectory.get("mid_bbox") is not None:
+        lines.append(
+            f"{label} follows a two-stage piecewise-linear START → MID → END trajectory and must pass through its "
+            f"explicit midpoint BBOX {trajectory['mid_bbox']} around t={trajectory.get('mid_time', _MID_TIME):.2f}; "
+            "do not shortcut directly from START to END."
+        )
+        first = _segment_summary(label, "first half START→MID", trajectory.get("segment_start_mid"))
+        second = _segment_summary(label, "second half MID→END", trajectory.get("segment_mid_end"))
+        if first:
+            lines.append(first)
+        if second:
+            lines.append(second)
+
     if scale_change == "increase":
         lines.append(f"{label}'s apparent on-screen scale increases to about {ratio:.2f}x from START to END.")
     elif scale_change == "decrease":
         lines.append(f"{label}'s apparent on-screen scale decreases to about {ratio:.2f}x from START to END.")
 
     if interpretation == "approach_camera":
-        lines.append(
-            f"The description explicitly calls for depth approach: {label} moves genuinely toward the camera and "
-            "naturally becomes larger in frame; this is subject motion through depth, not a digital camera zoom."
-        )
+        lines.append(f"The description explicitly calls for depth approach: {label} moves genuinely toward the camera and naturally becomes larger in frame; this is subject motion through depth, not a digital camera zoom.")
     elif interpretation == "recede_camera":
-        lines.append(
-            f"The description explicitly calls for depth recession: {label} moves genuinely away from the camera "
-            "and naturally becomes smaller in frame; this is subject motion through depth, not a digital camera zoom."
-        )
+        lines.append(f"The description explicitly calls for depth recession: {label} moves genuinely away from the camera and naturally becomes smaller in frame; this is subject motion through depth, not a digital camera zoom.")
     elif interpretation == "physical_growth":
         lines.append(f"Interpret the scale increase as physical growth of {label}, not camera zoom.")
     elif interpretation == "physical_shrink":
         lines.append(f"Interpret the scale decrease as physical shrinking of {label}, not camera zoom.")
     elif scale_change != "stable" and reinforcement != "compact":
-        lines.append(
-            f"Preserve this BBOX scale change for {label}; do not silently discard it or infer a camera zoom unless "
-            "the prompt explicitly requests camera motion."
-        )
+        lines.append(f"Preserve this BBOX scale change for {label}; do not silently discard it or infer a camera zoom unless the prompt explicitly requests camera motion.")
 
     if screen_motion != "stable" and trajectory.get("dominant_change") != "scale":
         lines.append(f"{label}'s screen-space center also moves {screen_motion.replace('_', '-')} across the frame.")
 
     side = trajectory.get("exit_frame")
     if side:
-        lines.append(
-            f"{label} exits completely beyond the {side} edge by END and is no longer visible; "
-            "the visible canvas boundary is not a stopping point."
-        )
+        lines.append(f"{label} exits completely beyond the {side} edge by END and is no longer visible; the visible canvas boundary is not a stopping point.")
     side = trajectory.get("enter_frame")
     if side:
         lines.append(f"{label} starts offscreen beyond the {side} edge and enters the visible frame from that side.")
 
     if reinforcement != "compact":
         anchor_labels = {
-            "center_x": "horizontal center",
-            "center_y": "vertical center",
-            "left_edge": "left edge",
-            "top_edge": "top edge",
-            "right_edge": "right edge",
-            "bottom_edge": "bottom edge",
+            "center_x": "horizontal center", "center_y": "vertical center", "left_edge": "left edge",
+            "top_edge": "top edge", "right_edge": "right edge", "bottom_edge": "bottom edge",
         }
         named = [anchor_labels[item] for item in anchors if item in anchor_labels]
         if named and scale_change != "stable":
@@ -523,34 +544,36 @@ def install_schema_fixes(schema_module: Any) -> None:
         elif raw is not None and not isinstance(raw, dict):
             malformed = True
 
-        layout, warnings = original_layout(
-            raw,
-            width_override=width_override,
-            height_override=height_override,
-        )
+        layout, warnings = original_layout(raw, width_override=width_override, height_override=height_override)
         warnings = list(warnings)
 
-        if isinstance(source.get("timeline_experimental"), dict):
+        timeline = source.get("timeline_experimental") if isinstance(source.get("timeline_experimental"), dict) else None
+        if timeline is not None:
             raw_boxes = source.get("boxes")
             if not isinstance(raw_boxes, list):
                 raw_boxes = source.get("layout", {}).get("boxes") if isinstance(source.get("layout"), dict) else []
             loose_start = _extract_box_map(schema_module, raw_boxes)
             transition = source.get("transition") if isinstance(source.get("transition"), dict) else {}
             loose_end = _extract_box_map(schema_module, transition.get("end_boxes"))
+            loose_mid = _extract_box_map(schema_module, timeline.get("mid_boxes"))
+
             if loose_start:
                 layout["boxes"] = _merge_boxes(schema_module, layout.get("boxes"), loose_start)
             if loose_end:
                 output_transition = layout.setdefault("transition", {})
                 output_transition.setdefault("end_canvas", copy.deepcopy(layout.get("canvas", {})))
-                output_transition["end_boxes"] = _merge_boxes(
-                    schema_module,
-                    output_transition.get("end_boxes"),
-                    loose_end,
-                )
-            if any(_is_offscreen_bbox(box) for box in [*loose_start.values(), *loose_end.values()]):
-                warnings.append(
-                    "Experimental timeline offscreen BBOX coordinates were preserved within the -1000..2000 overscan range."
-                )
+                output_transition["end_boxes"] = _merge_boxes(schema_module, output_transition.get("end_boxes"), loose_end)
+            if loose_mid:
+                layout["timeline_experimental"] = {
+                    "version": 3,
+                    "duration_seconds": float(timeline.get("duration_seconds") or 5.0),
+                    "interpolation": "piecewise_linear",
+                    "mid_time": _MID_TIME,
+                    "mid_boxes": _serialized_boxes(schema_module, loose_mid),
+                    "coordinate_space": "normalized_0_1000_with_offscreen_overscan",
+                }
+            if any(_is_offscreen_bbox(box) for box in [*loose_start.values(), *loose_mid.values(), *loose_end.values()]):
+                warnings.append("Experimental timeline offscreen BBOX coordinates were preserved within the -1000..2000 overscan range.")
 
         if malformed:
             warnings.insert(0, "Layout JSON could not be restored; defaults were loaded.")
@@ -567,9 +590,7 @@ def install_schema_fixes(schema_module: Any) -> None:
                 continue
             clamped = max(0.0, min(100.0, float(value)))
             if clamped != float(value):
-                warnings.append(
-                    f"Slot {slot.upper()} Value (%) was clamped to the supported 0-100 range."
-                )
+                warnings.append(f"Slot {slot.upper()} Value (%) was clamped to the supported 0-100 range.")
             item["value"] = clamped
         return config, warnings
 
@@ -590,6 +611,13 @@ def install_compiler_fixes(compiler_module: Any) -> None:
         element_map = {item["id"]: item for item in elements}
         entry_map = {entry["slot"]: entry for entry in layout_entries}
         trajectory_map: dict[str, dict[str, Any]] = {}
+        timeline = layout.get("timeline_experimental") if isinstance(layout.get("timeline_experimental"), dict) else {}
+        mid_by_slot = {
+            item["slot"]: item["bbox_2d"]
+            for item in timeline.get("mid_boxes", [])
+            if isinstance(item, dict) and isinstance(item.get("bbox_2d"), list)
+        }
+        id_to_slot = {item.get("id"): item.get("slot") for item in sequence_items}
 
         for entry in layout_entries:
             if "start_bbox" not in entry or "end_bbox" not in entry:
@@ -601,6 +629,30 @@ def install_compiler_fixes(compiler_module: Any) -> None:
             if trajectory is None:
                 continue
             trajectory.update(_offscreen_semantics(entry["start_bbox"], entry["end_bbox"]))
+
+            raw_slot = id_to_slot.get(entry["slot"])
+            mid_bbox = mid_by_slot.get(raw_slot)
+            if mid_bbox is not None:
+                start_mid = _trajectory_semantics(entry["start_bbox"], mid_bbox, element)
+                mid_end = _trajectory_semantics(mid_bbox, entry["end_bbox"], element)
+                if isinstance(start_mid, dict):
+                    start_mid.update(_offscreen_semantics(entry["start_bbox"], mid_bbox))
+                if isinstance(mid_end, dict):
+                    mid_end.update(_offscreen_semantics(mid_bbox, entry["end_bbox"]))
+                trajectory.update({
+                    "interpolation": "piecewise_linear",
+                    "mid_time": _MID_TIME,
+                    "mid_bbox": list(mid_bbox),
+                    "mid_visibility": _visibility(mid_bbox),
+                    "keyframes": [
+                        {"name": "start", "t": 0.0, "bbox": list(entry["start_bbox"])},
+                        {"name": "mid", "t": _MID_TIME, "bbox": list(mid_bbox)},
+                        {"name": "end", "t": 1.0, "bbox": list(entry["end_bbox"])},
+                    ],
+                    "segment_start_mid": start_mid,
+                    "segment_mid_end": mid_end,
+                })
+
             element["trajectory"] = trajectory
             trajectory_map[entry["slot"]] = trajectory
 
@@ -663,9 +715,7 @@ def install_compiler_fixes(compiler_module: Any) -> None:
                 else:
                     start_position = compiler_module._position_name(entry["start_bbox"], include_vertical)
                     end_position = compiler_module._position_name(entry["end_bbox"], include_vertical)
-                    compact_positions.append(
-                        f"{label} moves from the {start_position} region to the {end_position} region over the clip."
-                    )
+                    compact_positions.append(f"{label} moves from the {start_position} region to the {end_position} region over the clip.")
             trajectory = element.get("trajectory")
             if isinstance(trajectory, dict):
                 trajectory_lines.extend(_trajectory_summary_lines(label, trajectory, reinforcement))
@@ -673,18 +723,11 @@ def install_compiler_fixes(compiler_module: Any) -> None:
                 target = relation.get("target", "the other element")
                 change = relation.get("change")
                 if change == "separates_from":
-                    relation_lines.append(
-                        f"{label} begins strongly overlapping or geometrically contained within {target}, then "
-                        "separates from it by END. Keep both identities distinct; geometry alone does not imply holding."
-                    )
+                    relation_lines.append(f"{label} begins strongly overlapping or geometrically contained within {target}, then separates from it by END. Keep both identities distinct; geometry alone does not imply holding.")
                 elif change == "joins_or_overlaps":
-                    relation_lines.append(
-                        f"{label} begins separate from {target}, then moves into strong overlap by END while remaining distinct."
-                    )
+                    relation_lines.append(f"{label} begins separate from {target}, then moves into strong overlap by END while remaining distinct.")
                 elif change == "strong_overlap_persists":
-                    relation_lines.append(
-                        f"{label} remains strongly overlapping with {target}; preserve both identities without merging them."
-                    )
+                    relation_lines.append(f"{label} remains strongly overlapping with {target}; preserve both identities without merging them.")
 
         insertion = [*descriptions, *compact_positions, *trajectory_lines, *relation_lines]
         if insertion:
