@@ -9,7 +9,8 @@ const HIDDEN_SLOTS = ["d", "e"];
 const SLOT_COLORS = { a: "#ef4444", b: "#3b82f6", c: "#facc15" };
 const SLOT_LABELS = { a: "A", b: "B", c: "C" };
 const DURATION_SECONDS = 5.0;
-const ENDPOINT_EPSILON = 0.0005;
+const MID_TIME = 0.5;
+const EDIT_EPSILON = 0.0005;
 const VIEW_MIN = -100;
 const VIEW_MAX = 1100;
 const VIEW_SPAN = VIEW_MAX - VIEW_MIN;
@@ -63,7 +64,10 @@ function simplifiedAspect(width, height) {
   for (const candidate of canonical) {
     const target = candidate[0] / candidate[1];
     const error = Math.abs(ratio - target) / target;
-    if (error < bestError) { best = candidate; bestError = error; }
+    if (error < bestError) {
+      best = candidate;
+      bestError = error;
+    }
   }
   if (bestError <= 0.025) return `${best[0]}:${best[1]}`;
   const gcd = (a, b) => (b ? gcd(b, a % b) : a);
@@ -104,21 +108,6 @@ function cloneBox(box) {
   return box ? { ...box, bbox_2d: [...box.bbox_2d] } : null;
 }
 
-function sameBox(a, b) {
-  if (!a || !b) return !a && !b;
-  return a.bbox_2d.every((value, index) => Math.round(value) === Math.round(b.bbox_2d[index]));
-}
-
-function endpointName(t) {
-  if (Number(t) <= ENDPOINT_EPSILON) return "start";
-  if (Number(t) >= 1 - ENDPOINT_EPSILON) return "end";
-  return null;
-}
-
-function isEndpoint(t) {
-  return endpointName(t) !== null;
-}
-
 function interpolateBox(start, end, t, slot) {
   if (!start && !end) return null;
   if (!start) return cloneBox(end);
@@ -128,20 +117,51 @@ function interpolateBox(start, end, t, slot) {
   }, slot);
 }
 
+function editPointName(t) {
+  const value = Number(t);
+  if (value <= EDIT_EPSILON) return "start";
+  if (Math.abs(value - MID_TIME) <= EDIT_EPSILON) return "mid";
+  if (value >= 1 - EDIT_EPSILON) return "end";
+  return null;
+}
+
+function isEditPoint(t) {
+  return editPointName(t) !== null;
+}
+
+function trackIsEmpty(track) {
+  return !track?.start && !track?.mid && !track?.end;
+}
+
+function effectiveMid(track, slot) {
+  if (!track) return null;
+  if (track.midExplicit && track.mid) return cloneBox(track.mid);
+  return interpolateBox(track.start, track.end, MID_TIME, slot);
+}
+
+function previewBox(track, t, slot) {
+  if (!track) return null;
+  const mid = effectiveMid(track, slot);
+  if (t <= MID_TIME) return interpolateBox(track.start, mid, t / MID_TIME, slot);
+  return interpolateBox(mid, track.end, (t - MID_TIME) / (1 - MID_TIME), slot);
+}
+
 function buildExperimentState(controller, rawValue) {
   const raw = parseObject(rawValue);
+  const timeline = parseObject(raw.timeline_experimental);
   const starts = boxMap(raw.boxes ?? raw.layout?.boxes ?? controller.state?.boxes ?? []);
   const ends = boxMap(raw.transition?.end_boxes ?? []);
+  const mids = boxMap(timeline.mid_boxes ?? []);
   const tracks = {};
-  const editState = {};
   for (const slot of VISIBLE_SLOTS) {
     const start = starts.get(slot) ?? null;
     const end = ends.get(slot) ?? start;
-    tracks[slot] = { start: cloneBox(start ?? end), end: cloneBox(end ?? start) };
-    editState[slot] = {
-      linked: !start || !end || sameBox(start, end),
-      provisional: !start && !end,
-      originEndpoint: null,
+    const mid = mids.get(slot) ?? null;
+    tracks[slot] = {
+      start: cloneBox(start ?? end),
+      mid: cloneBox(mid),
+      end: cloneBox(end ?? start),
+      midExplicit: Boolean(mid),
     };
   }
   const hiddenTracks = {};
@@ -151,12 +171,11 @@ function buildExperimentState(controller, rawValue) {
     hiddenTracks[slot] = { start: cloneBox(start ?? end), end: cloneBox(end ?? start) };
   }
   return {
-    version: 2,
-    duration: Number(raw.timeline_experimental?.duration_seconds) || DURATION_SECONDS,
+    version: 3,
+    duration: Number(timeline.duration_seconds) || DURATION_SECONDS,
     t: 0,
     tracks,
     hiddenTracks,
-    editState,
     playing: false,
     raf: 0,
     ui: null,
@@ -176,10 +195,12 @@ function serializedLayout(controller) {
   if (!VISIBLE_SLOTS.includes(canvas.active_slot)) canvas.active_slot = "a";
 
   const startBoxes = [];
+  const midBoxes = [];
   const endBoxes = [];
   for (const slot of VISIBLE_SLOTS) {
     const track = exp.tracks[slot];
     if (track?.start) startBoxes.push(cloneBox(track.start));
+    if (track?.midExplicit && track.mid) midBoxes.push(cloneBox(track.mid));
     if (track?.end) endBoxes.push(cloneBox(track.end));
   }
   for (const slot of HIDDEN_SLOTS) {
@@ -193,11 +214,13 @@ function serializedLayout(controller) {
     boxes: startBoxes,
     transition: { end_canvas: clone(canvas), end_boxes: endBoxes },
     timeline_experimental: {
-      version: 2,
+      version: 3,
       slots: ["a", "b", "c"],
       duration_seconds: exp.duration,
-      interpolation: "linear",
+      interpolation: "piecewise_linear",
       canonical_time: "normalized_0_1",
+      mid_time: MID_TIME,
+      mid_boxes: midBoxes,
       coordinate_space: "normalized_0_1000_with_offscreen_overscan",
     },
   };
@@ -208,8 +231,7 @@ function applyPreview(controller, draw = true) {
   if (!exp) return;
   const preview = [];
   for (const slot of VISIBLE_SLOTS) {
-    const track = exp.tracks[slot];
-    const box = interpolateBox(track?.start, track?.end, exp.t, slot);
+    const box = previewBox(exp.tracks[slot], exp.t, slot);
     if (box) preview.push(box);
   }
   controller.state.canvas.show_boxes = true;
@@ -233,41 +255,27 @@ function writeExperimentalState(controller) {
   applyPreview(controller);
 }
 
-function setEndpointBox(controller, slot, rawBox) {
+function setEditPointBox(controller, slot, rawBox) {
   const exp = controller.__h3scTimelineExp;
-  const endpoint = endpointName(exp?.t);
+  const point = editPointName(exp?.t);
   const box = normalizeBox({ bbox_2d: rawBox }, slot);
-  if (!exp || !endpoint || !box || !VISIBLE_SLOTS.includes(slot)) return false;
-  const track = exp.tracks[slot] ?? (exp.tracks[slot] = { start: null, end: null });
-  const state = exp.editState[slot] ?? (exp.editState[slot] = { linked: true, provisional: true, originEndpoint: null });
-  const drawingNewTrack = controller.drag?.mode === "draw" && state.provisional;
+  if (!exp || !point || !box || !VISIBLE_SLOTS.includes(slot)) return false;
+  const track = exp.tracks[slot] ?? (exp.tracks[slot] = { start: null, mid: null, end: null, midExplicit: false });
 
-  // A brand-new draw stays provisional until pointerup. Keep START and END
-  // identical while dragging regardless of which endpoint initiated the draw,
-  // so an early 1x1/seed box can never become the opposite endpoint.
-  if (drawingNewTrack) {
+  // A new slot is initialized identically at START/MID/END regardless of which
+  // edit point created it. After creation all three points are independent.
+  if (trackIsEmpty(track)) {
     track.start = cloneBox(box);
+    track.mid = null;
     track.end = cloneBox(box);
-    state.linked = true;
-  } else if (state.linked) {
-    // Linked tracks remember which endpoint created them. Re-editing the
-    // creation endpoint keeps START/END together; touching the opposite
-    // endpoint creates the trajectory and unlinks the pair symmetrically.
-    if (state.provisional || !track.start || !track.end) {
-      track.start = cloneBox(box);
-      track.end = cloneBox(box);
-    } else if (state.originEndpoint === endpoint) {
-      track.start = cloneBox(box);
-      track.end = cloneBox(box);
-    } else {
-      state.linked = false;
-      if (endpoint === "start") track.start = cloneBox(box);
-      else track.end = cloneBox(box);
-    }
-    state.provisional = false;
+    track.midExplicit = false;
+  } else if (point === "start") {
+    track.start = cloneBox(box);
+  } else if (point === "mid") {
+    track.mid = cloneBox(box);
+    track.midExplicit = true;
   } else {
-    if (endpoint === "start") track.start = cloneBox(box);
-    else track.end = cloneBox(box);
+    track.end = cloneBox(box);
   }
 
   exp.selectedSlot = slot;
@@ -279,8 +287,7 @@ function setEndpointBox(controller, slot, rawBox) {
 function removeSlot(controller, slot) {
   const exp = controller.__h3scTimelineExp;
   if (!exp || !VISIBLE_SLOTS.includes(slot)) return;
-  exp.tracks[slot] = { start: null, end: null };
-  exp.editState[slot] = { linked: true, provisional: true, originEndpoint: null };
+  exp.tracks[slot] = { start: null, mid: null, end: null, midExplicit: false };
   exp.selectedSlot = null;
   applyPreview(controller, false);
   writeExperimentalState(controller);
@@ -309,7 +316,7 @@ function startPlayback(controller) {
   if (!exp) return;
   if (exp.playing) { stopPlayback(controller); return; }
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) { setPlayhead(controller, 1); return; }
-  if (exp.t >= 1 - ENDPOINT_EPSILON) exp.t = 0;
+  if (exp.t >= 1 - EDIT_EPSILON) exp.t = 0;
   exp.playing = true;
   const startT = exp.t;
   const startTime = performance.now();
@@ -421,7 +428,7 @@ function wireCanvasEvents(controller) {
   controller.eventPoint = (event) => { const rect = canvas.getBoundingClientRect(); return { x: clamp(fromPixel(event.clientX - rect.left, rect.width), INTERNAL_MIN, INTERNAL_MAX), y: clamp(fromPixel(event.clientY - rect.top, rect.height), INTERNAL_MIN, INTERNAL_MAX), px: event.clientX - rect.left, py: event.clientY - rect.top, rect }; };
   canvas.onpointerdown = (event) => {
     if (event.button !== 0) return; event.preventDefault(); event.stopPropagation(); canvas.focus();
-    if (!isEndpoint(exp.t)) { updateTimelineUI(controller); return; }
+    if (!isEditPoint(exp.t)) { updateTimelineUI(controller); return; }
     canvas.setPointerCapture?.(event.pointerId); const point = controller.eventPoint(event), hit = hitTest(controller, point);
     if (hit) { controller.state.canvas.active_slot = hit.box.slot; exp.selectedSlot = hit.box.slot; controller.drag = { pointerId: event.pointerId, mode: hit.mode, handle: hit.handle, start: point, original: [...hit.box.bbox_2d] }; }
     else if (controller.drawMode) { exp.selectedSlot = controller.activeSlot; controller.drag = { pointerId: event.pointerId, mode: "draw", start: point, original: null }; }
@@ -433,60 +440,41 @@ function wireCanvasEvents(controller) {
     if (controller.drag.mode === "draw") box = [Math.min(controller.drag.start.x, point.x), Math.min(controller.drag.start.y, point.y), Math.max(controller.drag.start.x, point.x), Math.max(controller.drag.start.y, point.y)];
     else if (controller.drag.mode === "move") { const [ox1, oy1, ox2, oy2] = controller.drag.original; const width = ox2 - ox1, height = oy2 - oy1; const x1 = clamp(ox1 + point.x - controller.drag.start.x, INTERNAL_MIN, INTERNAL_MAX - width), y1 = clamp(oy1 + point.y - controller.drag.start.y, INTERNAL_MIN, INTERNAL_MAX - height); box = [x1, y1, x1 + width, y1 + height]; }
     else { let [x1, y1, x2, y2] = controller.drag.original; if (controller.drag.handle.includes("n")) y1 = point.y; if (controller.drag.handle.includes("s")) y2 = point.y; if (controller.drag.handle.includes("w")) x1 = point.x; if (controller.drag.handle.includes("e")) x2 = point.x; box = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)]; }
-    if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) setEndpointBox(controller, exp.selectedSlot ?? controller.activeSlot, box);
+    if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) setEditPointBox(controller, exp.selectedSlot ?? controller.activeSlot, box);
   };
   const finish = (event) => {
     if (!controller.drag || event.pointerId !== controller.drag.pointerId) return;
     const drag = controller.drag;
     const slot = exp.selectedSlot;
-
-    // Pointerup is authoritative for a new draw. Recompute the final rectangle
-    // from the actual release position so START-first and END-first creation
-    // are perfectly symmetric and neither can preserve an early seed box.
     if (drag.mode === "draw" && slot) {
       const point = controller.eventPoint(event);
-      const finalBox = [
-        Math.min(drag.start.x, point.x),
-        Math.min(drag.start.y, point.y),
-        Math.max(drag.start.x, point.x),
-        Math.max(drag.start.y, point.y),
-      ];
-      if (finalBox[2] - finalBox[0] >= 1 && finalBox[3] - finalBox[1] >= 1) {
-        setEndpointBox(controller, slot, finalBox);
-      }
+      const finalBox = [Math.min(drag.start.x, point.x), Math.min(drag.start.y, point.y), Math.max(drag.start.x, point.x), Math.max(drag.start.y, point.y)];
+      if (finalBox[2] - finalBox[0] >= 1 && finalBox[3] - finalBox[1] >= 1) setEditPointBox(controller, slot, finalBox);
     }
-
     const box = slot ? controller.state.boxes.find((item) => item.slot === slot) : null;
     const tooSmall = !box || box.bbox_2d[2] - box.bbox_2d[0] < 12 || box.bbox_2d[3] - box.bbox_2d[1] < 12;
-    if (drag.mode === "draw" && tooSmall) {
-      removeSlot(controller, slot);
-    } else if (drag.mode === "draw" && slot) {
-      const state = exp.editState[slot];
-      if (state?.provisional && box) {
-        const track = exp.tracks[slot];
-        track.start = cloneBox(box);
-        track.end = cloneBox(box);
-        state.provisional = false;
-        state.linked = true;
-        state.originEndpoint = endpointName(exp.t);
-      }
-    }
+    if (drag.mode === "draw" && tooSmall) removeSlot(controller, slot);
     controller.drag = null;
     writeExperimentalState(controller);
   };
   canvas.onpointerup = finish; canvas.onpointercancel = finish;
-  canvas.onkeydown = (event) => { if ((event.key === "Delete" || event.key === "Backspace") && exp.selectedSlot && isEndpoint(exp.t)) { event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.(); removeSlot(controller, exp.selectedSlot); } };
+  canvas.onkeydown = (event) => { if ((event.key === "Delete" || event.key === "Backspace") && exp.selectedSlot && isEditPoint(exp.t)) { event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.(); removeSlot(controller, exp.selectedSlot); } };
 }
 
 function timelineElement(controller) {
   const exp = controller.__h3scTimelineExp, section = document.createElement("section"); section.className = "h3sc-timeline-exp";
-  const head = document.createElement("div"); head.className = "h3sc-timeline-exp-head"; const title = document.createElement("span"); title.className = "h3sc-timeline-exp-title"; title.textContent = "3-Slot Timeline"; const badge = document.createElement("span"); badge.className = "h3sc-timeline-exp-badge"; badge.textContent = "EXPERIMENTAL"; const spacer = document.createElement("span"); spacer.className = "h3sc-timeline-exp-spacer"; const state = document.createElement("span"); state.className = "h3sc-timeline-exp-state"; head.append(title, badge, spacer, state);
+  const head = document.createElement("div"); head.className = "h3sc-timeline-exp-head"; const title = document.createElement("span"); title.className = "h3sc-timeline-exp-title"; title.textContent = "3-Slot Timeline"; const badge = document.createElement("span"); badge.className = "h3sc-timeline-exp-badge"; badge.textContent = "3-POINT EXPERIMENTAL"; const spacer = document.createElement("span"); spacer.className = "h3sc-timeline-exp-spacer"; const state = document.createElement("span"); state.className = "h3sc-timeline-exp-state"; head.append(title, badge, spacer, state);
   const controls = document.createElement("div"); controls.className = "h3sc-timeline-exp-controls"; const play = document.createElement("button"); play.type = "button"; play.className = "h3sc-btn h3sc-timeline-exp-play"; play.textContent = "▶"; play.addEventListener("click", () => startPlayback(controller)); const time = document.createElement("span"); time.className = "h3sc-timeline-exp-time"; const number = document.createElement("input"); number.type = "number"; number.className = "h3sc-timeline-time-input"; number.min = "0"; number.max = String(exp.duration); number.step = "0.01"; number.setAttribute("aria-label", "Current timeline time in seconds"); const applyNumber = () => { const seconds = clamp(Number(number.value) || 0, 0, exp.duration); setPlayhead(controller, seconds / exp.duration); }; number.addEventListener("change", applyNumber); number.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); applyNumber(); number.blur(); } }); const range = document.createElement("input"); range.type = "range"; range.className = "h3sc-timeline-exp-range"; range.min = "0"; range.max = "1000"; range.step = "1"; range.addEventListener("input", () => setPlayhead(controller, Number(range.value) / 1000)); const end = document.createElement("span"); end.className = "h3sc-timeline-exp-end"; end.textContent = `${exp.duration.toFixed(2)}s`; controls.append(play, time, number, range, end);
-  const meta = document.createElement("div"); meta.className = "h3sc-timeline-exp-meta"; for (const slot of VISIBLE_SLOTS) { const item = document.createElement("span"); item.className = "h3sc-timeline-exp-slot"; const dot = document.createElement("span"); dot.className = "h3sc-timeline-exp-dot"; dot.style.background = SLOT_COLORS[slot]; item.append(dot, document.createTextNode(SLOT_LABELS[slot])); meta.append(item); } const linear = document.createElement("span"); linear.className = "h3sc-timeline-exp-slot"; linear.textContent = "Linear Start → End"; const note = document.createElement("span"); note.className = "h3sc-timeline-exp-note"; meta.append(linear, note); section.append(head, controls, meta); exp.ui = { section, play, time, number, range, state, note }; return section;
+  const meta = document.createElement("div"); meta.className = "h3sc-timeline-exp-meta"; for (const slot of VISIBLE_SLOTS) { const item = document.createElement("span"); item.className = "h3sc-timeline-exp-slot"; const dot = document.createElement("span"); dot.className = "h3sc-timeline-exp-dot"; dot.style.background = SLOT_COLORS[slot]; item.append(dot, document.createTextNode(SLOT_LABELS[slot])); meta.append(item); } const linear = document.createElement("span"); linear.className = "h3sc-timeline-exp-slot"; linear.textContent = "Piecewise Linear · START → MID → END"; const note = document.createElement("span"); note.className = "h3sc-timeline-exp-note"; meta.append(linear, note); section.append(head, controls, meta); exp.ui = { section, play, time, number, range, state, note }; return section;
 }
 
 function updateTimelineUI(controller) {
-  const exp = controller.__h3scTimelineExp; if (!exp?.ui) return; const seconds = exp.t * exp.duration; exp.ui.range.value = String(Math.round(exp.t * 1000)); exp.ui.time.textContent = `${seconds.toFixed(2)}s`; if (document.activeElement !== exp.ui.number) exp.ui.number.value = seconds.toFixed(2); exp.ui.play.textContent = exp.playing ? "■" : "▶"; const endpoint = endpointName(exp.t); if (endpoint === "start") { exp.ui.state.textContent = "START · EDIT"; exp.ui.note.textContent = "Start position is editable."; exp.ui.note.classList.remove("warning"); } else if (endpoint === "end") { exp.ui.state.textContent = "END · EDIT"; exp.ui.note.textContent = "End position is editable."; exp.ui.note.classList.remove("warning"); } else { exp.ui.state.textContent = "PREVIEW ONLY"; exp.ui.note.textContent = "Move playhead to 0.00s or 5.00s to edit."; exp.ui.note.classList.add("warning"); } if (controller.drawButton) controller.drawButton.disabled = !endpoint; const del = controller.root?.querySelector(".h3sc-toolbar .h3sc-btn.danger"); if (del) del.disabled = !endpoint; controller.canvas?.classList.toggle("h3sc-timeline-preview-only", !endpoint);
+  const exp = controller.__h3scTimelineExp; if (!exp?.ui) return; const seconds = exp.t * exp.duration; exp.ui.range.value = String(Math.round(exp.t * 1000)); exp.ui.time.textContent = `${seconds.toFixed(2)}s`; if (document.activeElement !== exp.ui.number) exp.ui.number.value = seconds.toFixed(2); exp.ui.play.textContent = exp.playing ? "■" : "▶"; const point = editPointName(exp.t);
+  if (point === "start") { exp.ui.state.textContent = "START · EDIT"; exp.ui.note.textContent = "Start position is editable."; exp.ui.note.classList.remove("warning"); }
+  else if (point === "mid") { exp.ui.state.textContent = "MID · EDIT"; exp.ui.note.textContent = "Mid position at 2.50s is editable."; exp.ui.note.classList.remove("warning"); }
+  else if (point === "end") { exp.ui.state.textContent = "END · EDIT"; exp.ui.note.textContent = "End position is editable."; exp.ui.note.classList.remove("warning"); }
+  else { exp.ui.state.textContent = "PREVIEW ONLY"; exp.ui.note.textContent = "Move playhead to 0.00s, 2.50s, or 5.00s to edit."; exp.ui.note.classList.add("warning"); }
+  if (controller.drawButton) controller.drawButton.disabled = !point; const del = controller.root?.querySelector(".h3sc-toolbar .h3sc-btn.danger"); if (del) del.disabled = !point; controller.canvas?.classList.toggle("h3sc-timeline-preview-only", !point);
 }
 
 function applyCanvasDOM(controller) {
@@ -510,13 +498,13 @@ function installCanvas(node, configuredRaw = null) {
   controller.__h3scTimelineExp = buildExperimentState(controller, configuredRaw ?? controller.stateWidget?.value);
   controller.sync = () => writeExperimentalState(controller);
   controller.updateControls = () => { originalUpdateControls(); if (controller.drawButton) controller.drawButton.textContent = controller.drawMode ? "Draw" : "Move"; updateTimelineUI(controller); };
-  controller.upsertBox = (slot, bbox) => { if (setEndpointBox(controller, slot, bbox)) writeExperimentalState(controller); };
+  controller.upsertBox = (slot, bbox) => { if (setEditPointBox(controller, slot, bbox)) writeExperimentalState(controller); };
   controller.removeBox = (slot) => removeSlot(controller, slot);
   controller.draw = () => drawCanvas(controller);
   controller.render = () => { originalRender(); applyCanvasDOM(controller); applyPreview(controller, false); wireCanvasEvents(controller); controller.fitAndDraw?.(); };
   controller.reloadFromWidgets = () => loadCanvasFromRaw(controller, controller.stateWidget?.value);
   controller.destroy = () => { stopPlayback(controller); if (controller.__h3scDeleteHandler) window.removeEventListener("keydown", controller.__h3scDeleteHandler, true); originalDestroy?.(); };
-  const deleteHandler = (event) => { const target = event.target; if (event.key !== "Delete" && event.key !== "Backspace") return; if (target instanceof Element && target.closest("input,textarea,select,[contenteditable='true']")) return; const exp = controller.__h3scTimelineExp; if (!exp?.selectedSlot || !isEndpoint(exp.t)) return; event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.(); removeSlot(controller, exp.selectedSlot); };
+  const deleteHandler = (event) => { const target = event.target; if (event.key !== "Delete" && event.key !== "Backspace") return; if (target instanceof Element && target.closest("input,textarea,select,[contenteditable='true']")) return; const exp = controller.__h3scTimelineExp; if (!exp?.selectedSlot || !isEditPoint(exp.t)) return; event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.(); removeSlot(controller, exp.selectedSlot); };
   controller.__h3scDeleteHandler = deleteHandler; window.addEventListener("keydown", deleteHandler, true);
   loadCanvasFromRaw(controller, configuredRaw ?? controller.stateWidget?.value); return true;
 }
@@ -526,14 +514,14 @@ function applyPrompterState(controller) {
 }
 
 function applyPrompterDOM(controller) {
-  ensureStyles(); const scroll = controller.root?.querySelector(".h3sc-scroll"); if (!scroll) return; const topbar = scroll.querySelector(":scope > .h3sc-topbar"); if (topbar) { const fields = [...topbar.querySelectorAll(":scope > .h3sc-field")]; fields.slice(1).forEach((field) => field.remove()); [...topbar.querySelectorAll(":scope > button")].forEach((button) => button.remove()); if (!topbar.querySelector(".h3sc-exp-prompter-note")) { const note = document.createElement("span"); note.className = "h3sc-exp-prompter-note"; note.textContent = "3-Slot Timeline Experimental · A/B/C Start → End"; topbar.append(note); } }
+  ensureStyles(); const scroll = controller.root?.querySelector(".h3sc-scroll"); if (!scroll) return; const topbar = scroll.querySelector(":scope > .h3sc-topbar"); if (topbar) { const fields = [...topbar.querySelectorAll(":scope > .h3sc-field")]; fields.slice(1).forEach((field) => field.remove()); [...topbar.querySelectorAll(":scope > button")].forEach((button) => button.remove()); if (!topbar.querySelector(".h3sc-exp-prompter-note")) { const note = document.createElement("span"); note.className = "h3sc-exp-prompter-note"; note.textContent = "3-Slot Timeline Experimental · A/B/C START → MID → END"; topbar.append(note); } }
   scroll.querySelectorAll(":scope > .h3sc-slot-card").forEach((card) => { const slot = card.querySelector(".h3sc-slot-chip")?.textContent?.trim()?.toLowerCase(); if (HIDDEN_SLOTS.includes(slot)) { card.remove(); return; } if (VISIBLE_SLOTS.includes(slot)) { const motion = card.querySelectorAll(".h3sc-slot-controls select")[1]; if (motion) { motion.value = "start_end"; motion.disabled = true; motion.classList.add("h3sc-exp-motion-locked"); } } }); scroll.querySelectorAll(":scope > .h3sc-card, :scope > details.h3sc-details").forEach((element) => element.remove());
 }
 
 function validConfig(value) { const parsed = parseObject(value); return parsed?.slots && typeof parsed.slots === "object"; }
 
 function snapshotPromptNode(node, markDirty = false) {
-  const controller = node?.__h3scController, widget = findWidget(node, "config_json"); if (!controller || !widget) return null; applyPrompterState(controller); const raw = JSON.stringify(controller.state); if (!validConfig(raw)) return null; setWidgetSerialized(widget); widget.value = raw; node.properties = node.properties || {}; node.properties.h3scPromptState = { version: "h3sc_prompt_persistence_v2", config_json: raw, saved_at: Date.now() }; const index = node.widgets?.indexOf(widget) ?? -1; if (Array.isArray(node.widgets_values) && index >= 0) node.widgets_values[index] = raw; if (markDirty) { node.setDirtyCanvas?.(true, true); app?.graph?.setDirtyCanvas?.(true, true); } return raw;
+  const controller = node?.__h3scController, widget = findWidget(node, "config_json"); if (!controller || !widget) return null; applyPrompterState(controller); const raw = JSON.stringify(controller.state); if (!validConfig(raw)) return null; setWidgetSerialized(widget); widget.value = raw; node.properties = node.properties || {}; node.properties.h3scPromptState = { version: "h3sc_prompt_persistence_v3", config_json: raw, saved_at: Date.now() }; const index = node.widgets?.indexOf(widget) ?? -1; if (Array.isArray(node.widgets_values) && index >= 0) node.widgets_values[index] = raw; if (markDirty) { node.setDirtyCanvas?.(true, true); app?.graph?.setDirtyCanvas?.(true, true); } return raw;
 }
 
 function installPrompter(node, configuredRaw = null) {
@@ -575,5 +563,5 @@ if (!app?.registerExtension) {
     setup() { installPromptLifecycleHooks(); },
     beforeRegisterNodeDef(nodeType, nodeData) { if (nodeData.name === CANVAS_NODE || nodeData.name === PROMPTER_NODE) wrapNodeType(nodeType, nodeData); },
   });
-  console.info("[H3 Structured Canvas] Consolidated 3-Slot Timeline Experimental loaded");
+  console.info("[H3 Structured Canvas] Consolidated 3-Point Timeline Experimental loaded");
 }
