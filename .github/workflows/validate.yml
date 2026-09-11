@@ -37,6 +37,7 @@ jobs:
           node --check web/zzzz_h3sc_correctness_cleanup.js
           node --check web/zzzzz_h3sc_timeline_experimental.js
           node --check web/zzzzzz_h3sc_timeline_fix.js
+          node --check web/zzzzzzz_h3sc_experimental_persistence.js
       - name: Package manifest
         shell: bash
         run: python tools/verify_manifest.py
