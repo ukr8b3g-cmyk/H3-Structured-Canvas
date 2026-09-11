@@ -24,6 +24,19 @@ class TimelineEndpointFixTests(unittest.TestCase):
         self.assertIn("track.end = cloneBox(box)", source)
         self.assertIn("if (state.linked && !sameBox(track.start, box)) state.linked = false", source)
 
+    def test_new_draw_stays_provisional_until_pointerup_for_start_or_end(self):
+        source = TIMELINE_JS.read_text(encoding="utf-8")
+        self.assertIn(
+            'const drawingNewTrack = controller.drag?.mode === "draw" && state.provisional;',
+            source,
+        )
+        self.assertIn("A brand-new draw stays provisional until pointerup", source)
+        self.assertIn("track.start = cloneBox(box);\n    track.end = cloneBox(box);", source)
+        self.assertIn("Pointerup is authoritative for a new draw", source)
+        self.assertIn("if (state?.provisional && box)", source)
+        self.assertIn("state.provisional = false;", source)
+        self.assertIn("state.linked = true;", source)
+
     def test_delete_and_backspace_remove_selected_bbox_without_node_delete(self):
         source = TIMELINE_JS.read_text(encoding="utf-8")
         self.assertIn('event.key !== "Delete" && event.key !== "Backspace"', source)
