@@ -121,6 +121,23 @@ class ExperimentalV2Tests(unittest.TestCase):
         ):
             self.assertIn(required, source)
 
+    def test_overscan_editor_preserves_box_size_and_captures_delete(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        source = (root / "web" / "zzzzzzzzzz_h3sc_overscan_delete_fix.js").read_text(encoding="utf-8")
+        for required in (
+            "VIEW_MIN = -300",
+            "VIEW_MAX = 1300",
+            "OFFSCREEN",
+            "const boxWidth = ox2 - ox1",
+            "const boxHeight = oy2 - oy1",
+            "box = [x1, y1, x1 + boxWidth, y1 + boxHeight]",
+            "window.addEventListener(\"keydown\", handler, true)",
+            "event.stopImmediatePropagation",
+            "controller.removeBox",
+            "document.activeElement !== canvas",
+        ):
+            self.assertIn(required, source)
+
 
 if __name__ == "__main__":
     unittest.main()
