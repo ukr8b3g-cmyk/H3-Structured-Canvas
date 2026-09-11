@@ -141,6 +141,7 @@ function buildExperimentState(controller, rawValue) {
     editState[slot] = {
       linked: !start || !end || sameBox(start, end),
       provisional: !start && !end,
+      originEndpoint: null,
     };
   }
   const hiddenTracks = {};
@@ -238,7 +239,7 @@ function setEndpointBox(controller, slot, rawBox) {
   const box = normalizeBox({ bbox_2d: rawBox }, slot);
   if (!exp || !endpoint || !box || !VISIBLE_SLOTS.includes(slot)) return false;
   const track = exp.tracks[slot] ?? (exp.tracks[slot] = { start: null, end: null });
-  const state = exp.editState[slot] ?? (exp.editState[slot] = { linked: true, provisional: true });
+  const state = exp.editState[slot] ?? (exp.editState[slot] = { linked: true, provisional: true, originEndpoint: null });
   const drawingNewTrack = controller.drag?.mode === "draw" && state.provisional;
 
   // A brand-new draw stays provisional until pointerup. Keep START and END
@@ -248,18 +249,25 @@ function setEndpointBox(controller, slot, rawBox) {
     track.start = cloneBox(box);
     track.end = cloneBox(box);
     state.linked = true;
-  } else if (endpoint === "start") {
-    track.start = cloneBox(box);
-    if (state.linked || state.provisional || !track.end) track.end = cloneBox(box);
+  } else if (state.linked) {
+    // Linked tracks remember which endpoint created them. Re-editing the
+    // creation endpoint keeps START/END together; touching the opposite
+    // endpoint creates the trajectory and unlinks the pair symmetrically.
+    if (state.provisional || !track.start || !track.end) {
+      track.start = cloneBox(box);
+      track.end = cloneBox(box);
+    } else if (state.originEndpoint === endpoint) {
+      track.start = cloneBox(box);
+      track.end = cloneBox(box);
+    } else {
+      state.linked = false;
+      if (endpoint === "start") track.start = cloneBox(box);
+      else track.end = cloneBox(box);
+    }
     state.provisional = false;
-  } else if (state.provisional || !track.start) {
-    track.start = cloneBox(box);
-    track.end = cloneBox(box);
-    state.provisional = false;
-    state.linked = true;
   } else {
-    if (state.linked && !sameBox(track.start, box)) state.linked = false;
-    track.end = cloneBox(box);
+    if (endpoint === "start") track.start = cloneBox(box);
+    else track.end = cloneBox(box);
   }
 
   exp.selectedSlot = slot;
@@ -272,7 +280,7 @@ function removeSlot(controller, slot) {
   const exp = controller.__h3scTimelineExp;
   if (!exp || !VISIBLE_SLOTS.includes(slot)) return;
   exp.tracks[slot] = { start: null, end: null };
-  exp.editState[slot] = { linked: true, provisional: true };
+  exp.editState[slot] = { linked: true, provisional: true, originEndpoint: null };
   exp.selectedSlot = null;
   applyPreview(controller, false);
   writeExperimentalState(controller);
@@ -460,6 +468,7 @@ function wireCanvasEvents(controller) {
         track.end = cloneBox(box);
         state.provisional = false;
         state.linked = true;
+        state.originEndpoint = endpointName(exp.t);
       }
     }
     controller.drag = null;
