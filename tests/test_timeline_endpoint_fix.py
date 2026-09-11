@@ -20,9 +20,9 @@ class TimelineEndpointFixTests(unittest.TestCase):
         self.assertIn("editState[slot]", source)
         self.assertIn("linked:", source)
         self.assertIn("provisional:", source)
+        self.assertIn("originEndpoint:", source)
         self.assertIn("track.start = cloneBox(box)", source)
         self.assertIn("track.end = cloneBox(box)", source)
-        self.assertIn("if (state.linked && !sameBox(track.start, box)) state.linked = false", source)
 
     def test_new_draw_stays_provisional_until_pointerup_for_start_or_end(self):
         source = TIMELINE_JS.read_text(encoding="utf-8")
@@ -36,6 +36,15 @@ class TimelineEndpointFixTests(unittest.TestCase):
         self.assertIn("if (state?.provisional && box)", source)
         self.assertIn("state.provisional = false;", source)
         self.assertIn("state.linked = true;", source)
+        self.assertIn("state.originEndpoint = endpointName(exp.t);", source)
+
+    def test_opposite_endpoint_unlinks_symmetrically_after_start_or_end_first_creation(self):
+        source = TIMELINE_JS.read_text(encoding="utf-8")
+        self.assertIn("state.originEndpoint === endpoint", source)
+        self.assertIn("touching the opposite", source)
+        self.assertIn("state.linked = false;", source)
+        self.assertIn('if (endpoint === "start") track.start = cloneBox(box);', source)
+        self.assertIn("else track.end = cloneBox(box);", source)
 
     def test_delete_and_backspace_remove_selected_bbox_without_node_delete(self):
         source = TIMELINE_JS.read_text(encoding="utf-8")
