@@ -37,23 +37,6 @@ jobs:
           node --check web/zzzz_h3sc_correctness_cleanup.js
           node --check web/zzzzz_h3sc_timeline_experimental.js
           node --check web/zzzzzz_h3sc_mp4_metadata.js
-      - name: Three-point manifest hashes
-        shell: bash
-        run: |
-          python - <<'PY'
-          import hashlib
-          from pathlib import Path
-          for rel in [
-              'docs/TIMELINE_EXPERIMENTAL_V1.md',
-              'h3_structured_canvas/correctness.py',
-              'tests/test_timeline_endpoint_fix.py',
-              'tests/test_timeline_experimental.py',
-              'web/zzzz_h3sc_correctness_cleanup.js',
-              'web/zzzzz_h3sc_timeline_experimental.js',
-          ]:
-              data = Path(rel).read_bytes().replace(b'\r\n', b'\n')
-              print(f'{hashlib.sha256(data).hexdigest()}  {rel}')
-          PY
       - name: Package manifest
         shell: bash
         run: python tools/verify_manifest.py
