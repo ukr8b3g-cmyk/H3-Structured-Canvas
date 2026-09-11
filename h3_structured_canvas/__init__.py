@@ -15,6 +15,10 @@ from . import compiler as _compiler
 
 install_compiler_fixes(_compiler)
 install_experimental_v2(_schema, _compiler)
+# compiler.py imports sanitize_layout by value, so point it at the branch-local
+# experimental wrapper after installation. This keeps offscreen coordinates intact
+# through the compiler while non-experimental layouts retain production clamping.
+_compiler.sanitize_layout = _schema.sanitize_layout
 
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 from .schema import PACKAGE_VERSION
