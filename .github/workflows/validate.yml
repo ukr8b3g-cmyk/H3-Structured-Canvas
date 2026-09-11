@@ -36,12 +36,7 @@ jobs:
           node --check web/zzz_h3sc_easyuse_compat.js
           node --check web/zzzz_h3sc_correctness_cleanup.js
           node --check web/zzzzz_h3sc_timeline_experimental.js
-          node --check web/zzzzzz_h3sc_timeline_fix.js
-          node --check web/zzzzzzz_h3sc_experimental_persistence.js
-          node --check web/zzzzzzzz_h3sc_prompt_tab_persistence.js
-          node --check web/zzzzzzzzz_h3sc_experimental_v2.js
-          node --check web/zzzzzzzzzz_h3sc_overscan_delete_fix.js
-          node --check web/zzzzzzzzzzz_h3sc_ui_polish.js
+          node --check web/zzzzzz_h3sc_mp4_metadata.js
       - name: Package manifest
         shell: bash
         run: python tools/verify_manifest.py
