@@ -30,7 +30,7 @@ class TimelineExperimentalTests(unittest.TestCase):
                 ],
             },
             "timeline_experimental": {
-                "version": 1,
+                "version": 2,
                 "slots": ["a", "b", "c"],
                 "duration_seconds": 5.0,
                 "interpolation": "linear",
@@ -41,26 +41,16 @@ class TimelineExperimentalTests(unittest.TestCase):
         layout, warnings = schema.sanitize_layout(self.three_slot_layout())
         self.assertFalse(warnings)
         self.assertEqual([item["slot"] for item in layout["boxes"]], ["a", "b", "c"])
-        self.assertEqual(
-            layout["transition"]["end_boxes"][2]["bbox_2d"],
-            [350, 700, 650, 950],
-        )
+        self.assertEqual(layout["transition"]["end_boxes"][2]["bbox_2d"], [350, 700, 650, 950])
         self.assertNotIn("timeline_experimental", layout)
 
     def test_compiler_emits_three_independent_start_end_trajectories(self):
         config = schema.default_config()
         config["scene_description"] = "One continuous scene with three visible subjects."
-        for slot, description in {
-            "a": "Subject A.",
-            "b": "Subject B.",
-            "c": "Subject C.",
-        }.items():
-            config["slots"][slot].update(
-                {"type": "subject", "description": description, "motion": "start_end"}
-            )
+        for slot, description in {"a": "Subject A.", "b": "Subject B.", "c": "Subject C."}.items():
+            config["slots"][slot].update({"type": "subject", "description": description, "motion": "start_end"})
         config["slots"]["d"]["enabled"] = False
         config["slots"]["e"]["enabled"] = False
-
         prompt, structure, _ = compiler.compile_h3_prompt(self.three_slot_layout(), config)
         boxes = structure["model_structure"]["layout"]["boxes"]
         self.assertEqual(len(boxes), 3)
@@ -79,12 +69,13 @@ class TimelineExperimentalTests(unittest.TestCase):
         source = (root / "web" / "zzzzz_h3sc_timeline_experimental.js").read_text(encoding="utf-8")
         for required in (
             'const VISIBLE_SLOTS = ["a", "b", "c"]',
+            'const HIDDEN_SLOTS = ["d", "e"]',
             'const DURATION_SECONDS = 5.0',
             'Linear Start → End',
             'Delete Selected',
             'PREVIEW ONLY',
             'motion = "start_end"',
-            'slot === "d" || slot === "e"',
+            'HIDDEN_SLOTS.includes(slot)',
             'timeline_experimental',
         ):
             self.assertIn(required, source)
@@ -93,7 +84,7 @@ class TimelineExperimentalTests(unittest.TestCase):
 
     def test_serialized_timeline_metadata_is_json_safe_shape(self):
         metadata = {
-            "version": 1,
+            "version": 2,
             "slots": ["a", "b", "c"],
             "duration_seconds": 5.0,
             "interpolation": "linear",
