@@ -34,6 +34,15 @@ class TimelineEndpointFixTests(unittest.TestCase):
         self.assertIn('else if (point === "mid")', source)
         self.assertIn("track.midExplicit = true;", source)
 
+    def test_new_draw_keeps_final_geometry_for_start_mid_and_end_until_pointerup(self):
+        source = TIMELINE_JS.read_text(encoding="utf-8")
+        self.assertIn("creatingNewTrack", source)
+        self.assertIn("trackIsEmpty(exp.tracks[controller.activeSlot])", source)
+        self.assertIn('controller.drag?.mode === "draw" && controller.drag?.creatingNewTrack', source)
+        self.assertIn("During a brand-new draw, every pointermove updates the shared initial geometry", source)
+        self.assertIn("track.start = cloneBox(box);\n    track.mid = null;\n    track.end = cloneBox(box);", source)
+        self.assertIn("pointerup supplies the authoritative final rectangle", source)
+
     def test_mid_is_derived_until_user_edits_it(self):
         source = TIMELINE_JS.read_text(encoding="utf-8")
         self.assertIn("if (track.midExplicit && track.mid) return cloneBox(track.mid);", source)
