@@ -42,12 +42,6 @@ jobs:
           node --check web/zzzzzzzzz_h3sc_experimental_v2.js
           node --check web/zzzzzzzzzz_h3sc_overscan_delete_fix.js
           node --check web/zzzzzzzzzzz_h3sc_ui_polish.js
-      - name: Manifest hashes
-        shell: bash
-        run: |
-          sha256sum .github/workflows/validate.yml
-          sha256sum tests/test_experimental_v2.py
-          sha256sum web/zzzzzzzzzzz_h3sc_ui_polish.js
       - name: Package manifest
         shell: bash
         run: python tools/verify_manifest.py
