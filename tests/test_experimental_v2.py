@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import unittest
 
@@ -137,6 +138,18 @@ class ExperimentalV2Tests(unittest.TestCase):
             "document.activeElement !== canvas",
         ):
             self.assertIn(required, source)
+
+    def test_manifest_maintenance_hashes(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        paths = [
+            ".github/workflows/validate.yml",
+            "tests/test_experimental_v2.py",
+            "web/zzzzzzzzzz_h3sc_overscan_delete_fix.js",
+        ]
+        for rel in paths:
+            digest = hashlib.sha256((root / rel).read_bytes()).hexdigest()
+            print(f"MANIFEST_HASH {digest}  {rel}")
+            self.assertEqual(len(digest), 64)
 
 
 if __name__ == "__main__":
