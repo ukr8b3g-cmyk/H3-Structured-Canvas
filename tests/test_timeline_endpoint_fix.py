@@ -15,36 +15,31 @@ TIMELINE_JS = ROOT / "web" / "zzzzz_h3sc_timeline_experimental.js"
 
 
 class TimelineEndpointFixTests(unittest.TestCase):
-    def test_linked_start_end_and_provisional_draw_are_single_state_machine(self):
+    def test_three_edit_points_replace_linked_endpoint_state_machine(self):
         source = TIMELINE_JS.read_text(encoding="utf-8")
-        self.assertIn("editState[slot]", source)
-        self.assertIn("linked:", source)
-        self.assertIn("provisional:", source)
-        self.assertIn("originEndpoint:", source)
-        self.assertIn("track.start = cloneBox(box)", source)
-        self.assertIn("track.end = cloneBox(box)", source)
+        self.assertIn('if (Math.abs(value - MID_TIME) <= EDIT_EPSILON) return "mid";', source)
+        self.assertIn("track.midExplicit", source)
+        self.assertIn("effectiveMid(track, slot)", source)
+        self.assertNotIn("originEndpoint", source)
+        self.assertNotIn("state.linked", source)
 
-    def test_new_draw_stays_provisional_until_pointerup_for_start_or_end(self):
+    def test_new_draw_initializes_all_three_points_then_becomes_independent(self):
         source = TIMELINE_JS.read_text(encoding="utf-8")
-        self.assertIn(
-            'const drawingNewTrack = controller.drag?.mode === "draw" && state.provisional;',
-            source,
-        )
-        self.assertIn("A brand-new draw stays provisional until pointerup", source)
-        self.assertIn("track.start = cloneBox(box);\n    track.end = cloneBox(box);", source)
-        self.assertIn("Pointerup is authoritative for a new draw", source)
-        self.assertIn("if (state?.provisional && box)", source)
-        self.assertIn("state.provisional = false;", source)
-        self.assertIn("state.linked = true;", source)
-        self.assertIn("state.originEndpoint = endpointName(exp.t);", source)
+        self.assertIn("A new slot is initialized identically at START/MID/END", source)
+        self.assertIn("track.start = cloneBox(box);", source)
+        self.assertIn("track.mid = null;", source)
+        self.assertIn("track.end = cloneBox(box);", source)
+        self.assertIn("track.midExplicit = false;", source)
+        self.assertIn('else if (point === "start")', source)
+        self.assertIn('else if (point === "mid")', source)
+        self.assertIn("track.midExplicit = true;", source)
 
-    def test_opposite_endpoint_unlinks_symmetrically_after_start_or_end_first_creation(self):
+    def test_mid_is_derived_until_user_edits_it(self):
         source = TIMELINE_JS.read_text(encoding="utf-8")
-        self.assertIn("state.originEndpoint === endpoint", source)
-        self.assertIn("touching the opposite", source)
-        self.assertIn("state.linked = false;", source)
-        self.assertIn('if (endpoint === "start") track.start = cloneBox(box);', source)
-        self.assertIn("else track.end = cloneBox(box);", source)
+        self.assertIn("if (track.midExplicit && track.mid) return cloneBox(track.mid);", source)
+        self.assertIn("return interpolateBox(track.start, track.end, MID_TIME, slot);", source)
+        self.assertIn("if (t <= MID_TIME)", source)
+        self.assertIn("(t - MID_TIME) / (1 - MID_TIME)", source)
 
     def test_delete_and_backspace_remove_selected_bbox_without_node_delete(self):
         source = TIMELINE_JS.read_text(encoding="utf-8")
