@@ -40,6 +40,7 @@ jobs:
           node --check web/zzzzzzz_h3sc_experimental_persistence.js
           node --check web/zzzzzzzz_h3sc_prompt_tab_persistence.js
           node --check web/zzzzzzzzz_h3sc_experimental_v2.js
+          node --check web/zzzzzzzzzz_h3sc_overscan_delete_fix.js
       - name: Package manifest
         shell: bash
         run: python tools/verify_manifest.py
