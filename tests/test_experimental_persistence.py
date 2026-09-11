@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = ROOT / "web" / "zzzzzzz_h3sc_experimental_persistence.js"
+TAB_JS = ROOT / "web" / "zzzzzzzz_h3sc_prompt_tab_persistence.js"
 
 
 class ExperimentalPersistenceContractTests(unittest.TestCase):
@@ -13,6 +14,17 @@ class ExperimentalPersistenceContractTests(unittest.TestCase):
         self.assertIn('"description", "exact_text", "custom_behavior"', source)
         self.assertIn("restoreLostPromptDraft", source)
         self.assertIn('current.motion = "start_end"', source)
+
+    def test_prompt_survives_a_b_c_tab_round_trip(self):
+        source = TAB_JS.read_text(encoding="utf-8")
+        self.assertIn("snapshotPromptSlots", source)
+        self.assertIn("restorePromptSlots", source)
+        self.assertIn(".h3sc-slot-head,.h3sc-slot-tab,[data-h3sc-slot-tab]", source)
+        self.assertIn('"description"', source)
+        self.assertIn('"exact_text"', source)
+        self.assertIn('"type"', source)
+        self.assertIn('"custom_behavior"', source)
+        self.assertIn("A workflow reload is authoritative", source)
 
     def test_resize_preserves_timeline_tracks_in_normalized_space(self):
         source = JS.read_text(encoding="utf-8")
