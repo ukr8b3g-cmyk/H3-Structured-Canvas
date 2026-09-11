@@ -1,11 +1,14 @@
-"""Correctness hotfixes shared by the package entry point.
+"""Correctness and experimental timeline semantics for H3 Structured Canvas.
 
-These wrappers preserve the public schemas while tightening validation and
-natural-language compilation without changing saved workflow identifiers.
+This module installs one schema wrapper and one compiler wrapper. Experimental
+START/END offscreen coordinates, trajectory semantics, and overlap relations are
+handled in those same wrappers so behavior is deterministic and not stacked
+through later monkey patches.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 from typing import Any
@@ -16,6 +19,96 @@ _SCALE_DECREASE = 1 / _SCALE_INCREASE
 _EDGE_ANCHOR_TOLERANCE = 45.0
 _CENTER_ANCHOR_TOLERANCE = 55.0
 _TRANSLATION_TOLERANCE = 70.0
+_OFFSCREEN_MIN = -1000.0
+_OFFSCREEN_MAX = 2000.0
+_STRONG_OVERLAP = 0.60
+_SEPARATE_OVERLAP = 0.08
+
+
+def _parse_source(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return copy.deepcopy(raw)
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _slot(schema_module: Any, item: Any, index: int | None = None) -> str | None:
+    if not isinstance(item, dict):
+        return None
+    normalizer = getattr(schema_module, "_normalize_slot", None)
+    if callable(normalizer):
+        return normalizer(item.get("slot", item.get("id")), index)
+    value = str(item.get("slot", item.get("id", ""))).strip().lower()
+    return value if value in getattr(schema_module, "SLOTS", ()) else None
+
+
+def _loose_bbox(value: Any) -> list[int] | None:
+    if isinstance(value, dict):
+        if "bbox_2d" in value:
+            value = value.get("bbox_2d")
+        elif "bbox" in value:
+            value = value.get("bbox")
+        else:
+            value = [value.get("x1"), value.get("y1"), value.get("x2"), value.get("y2")]
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    coords: list[float] = []
+    for item in value:
+        try:
+            parsed = float(item)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(parsed):
+            return None
+        coords.append(parsed)
+    if max(abs(item) for item in coords) <= 1.000001:
+        coords = [item * 1000.0 for item in coords]
+    coords = [max(_OFFSCREEN_MIN, min(_OFFSCREEN_MAX, item)) for item in coords]
+    x1, y1, x2, y2 = coords
+    left, right = sorted((x1, x2))
+    top, bottom = sorted((y1, y2))
+    if right - left < 1.0 or bottom - top < 1.0:
+        return None
+    return [int(round(left)), int(round(top)), int(round(right)), int(round(bottom))]
+
+
+def _extract_box_map(schema_module: Any, items: Any) -> dict[str, list[int]]:
+    result: dict[str, list[int]] = {}
+    if not isinstance(items, list):
+        return result
+    for index, item in enumerate(items):
+        slot = _slot(schema_module, item, index)
+        bbox = _loose_bbox(item)
+        if slot and bbox:
+            result[slot] = bbox
+    return result
+
+
+def _merge_boxes(schema_module: Any, current: Any, loose: dict[str, list[int]]) -> list[dict[str, Any]]:
+    by_slot: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(current if isinstance(current, list) else []):
+        if not isinstance(item, dict):
+            continue
+        slot = _slot(schema_module, item, index)
+        if slot:
+            by_slot[slot] = copy.deepcopy(item)
+    for slot, bbox in loose.items():
+        item = by_slot.get(slot, {"slot": slot, "ui_color": schema_module.UI_COLORS.get(slot, "red")})
+        item["slot"] = slot
+        item["ui_color"] = schema_module.UI_COLORS.get(slot, item.get("ui_color", "red"))
+        item["bbox_2d"] = list(bbox)
+        item.pop("bbox", None)
+        by_slot[slot] = item
+    return [by_slot[slot] for slot in schema_module.SLOTS if slot in by_slot]
+
+
+def _is_offscreen_bbox(bbox: list[int]) -> bool:
+    return any(value < 0 or value > 1000 for value in bbox)
 
 
 def _bbox_geometry(bbox: Any) -> dict[str, Any] | None:
@@ -25,13 +118,19 @@ def _bbox_geometry(bbox: Any) -> dict[str, Any] | None:
         x1, y1, x2, y2 = (float(value) for value in bbox)
     except (TypeError, ValueError):
         return None
-    width = max(1.0, x2 - x1)
-    height = max(1.0, y2 - y1)
+    left, right = sorted((x1, x2))
+    top, bottom = sorted((y1, y2))
+    width = max(1.0, right - left)
+    height = max(1.0, bottom - top)
     return {
-        "center": [(x1 + x2) / 2.0, (y1 + y2) / 2.0],
+        "center": [(left + right) / 2.0, (top + bottom) / 2.0],
         "size": [width, height],
         "area": width * height,
-        "edges": [x1, y1, x2, y2],
+        "edges": [left, top, right, bottom],
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
     }
 
 
@@ -145,7 +244,7 @@ def _trajectory_semantics(start_bbox: Any, end_bbox: Any, element: dict[str, Any
         interpretation = "screen_translation" if screen_motion != "stable" else "stable"
 
     return {
-        "coordinate_space": "normalized_0_1000",
+        "coordinate_space": "normalized_0_1000_with_offscreen_overscan",
         "time": {"start": 0.0, "end": 1.0},
         "start_center": [round(value, 3) for value in start_center],
         "end_center": [round(value, 3) for value in end_center],
@@ -162,6 +261,150 @@ def _trajectory_semantics(start_bbox: Any, end_bbox: Any, element: dict[str, Any
         "dominant_change": dominant_change,
         "semantic_interpretation": interpretation,
     }
+
+
+def _outside_side(bbox: Any) -> str | None:
+    box = _bbox_geometry(bbox)
+    if box is None:
+        return None
+    if box["right"] <= 0:
+        return "left"
+    if box["left"] >= 1000:
+        return "right"
+    if box["bottom"] <= 0:
+        return "top"
+    if box["top"] >= 1000:
+        return "bottom"
+    return None
+
+
+def _visibility(bbox: Any) -> str:
+    box = _bbox_geometry(bbox)
+    if box is None:
+        return "unknown"
+    side = _outside_side(bbox)
+    if side:
+        return f"offscreen_{side}"
+    if box["left"] < 0 or box["top"] < 0 or box["right"] > 1000 or box["bottom"] > 1000:
+        return "partially_visible"
+    return "inside_frame"
+
+
+def _offscreen_semantics(start_bbox: Any, end_bbox: Any) -> dict[str, Any]:
+    start_side = _outside_side(start_bbox)
+    end_side = _outside_side(end_bbox)
+    result: dict[str, Any] = {
+        "start_visibility": _visibility(start_bbox),
+        "end_visibility": _visibility(end_bbox),
+    }
+    if end_side and not start_side:
+        result["exit_frame"] = end_side
+    if start_side and not end_side:
+        result["enter_frame"] = start_side
+    return result
+
+
+def _intersection_metrics(a_bbox: Any, b_bbox: Any) -> dict[str, float] | None:
+    a = _bbox_geometry(a_bbox)
+    b = _bbox_geometry(b_bbox)
+    if a is None or b is None:
+        return None
+    left = max(a["left"], b["left"])
+    top = max(a["top"], b["top"])
+    right = min(a["right"], b["right"])
+    bottom = min(a["bottom"], b["bottom"])
+    intersection = max(0.0, right - left) * max(0.0, bottom - top)
+    return {
+        "intersection": intersection,
+        "coverage_a": intersection / a["area"],
+        "coverage_b": intersection / b["area"],
+        "smaller_overlap": intersection / min(a["area"], b["area"]),
+        "area_a": a["area"],
+        "area_b": b["area"],
+    }
+
+
+def _entry_bbox(entry: dict[str, Any], endpoint: str) -> Any:
+    if endpoint == "start":
+        return entry.get("start_bbox", entry.get("bbox"))
+    return entry.get("end_bbox", entry.get("bbox"))
+
+
+def _relation_for_pair(a_id: str, a_entry: dict[str, Any], b_id: str, b_entry: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    start = _intersection_metrics(_entry_bbox(a_entry, "start"), _entry_bbox(b_entry, "start"))
+    end = _intersection_metrics(_entry_bbox(a_entry, "end"), _entry_bbox(b_entry, "end"))
+    if start is None or end is None:
+        return None
+
+    if start["area_a"] <= start["area_b"]:
+        subject_id, target_id = a_id, b_id
+        start_containment = start["coverage_a"]
+        end_containment = end["coverage_a"]
+    else:
+        subject_id, target_id = b_id, a_id
+        start_containment = start["coverage_b"]
+        end_containment = end["coverage_b"]
+
+    start_strong = start["smaller_overlap"] >= _STRONG_OVERLAP
+    end_strong = end["smaller_overlap"] >= _STRONG_OVERLAP
+    start_separate = start["smaller_overlap"] <= _SEPARATE_OVERLAP
+    end_separate = end["smaller_overlap"] <= _SEPARATE_OVERLAP
+
+    if start_strong and end_separate:
+        change = "separates_from"
+    elif start_separate and end_strong:
+        change = "joins_or_overlaps"
+    elif start_strong and end_strong:
+        change = "strong_overlap_persists"
+    else:
+        return None
+
+    return subject_id, {
+        "target": target_id,
+        "change": change,
+        "start_smaller_overlap_ratio": round(start["smaller_overlap"], 4),
+        "end_smaller_overlap_ratio": round(end["smaller_overlap"], 4),
+        "start_subject_containment_ratio": round(start_containment, 4),
+        "end_subject_containment_ratio": round(end_containment, 4),
+        "semantic_note": "Geometric overlap only; do not infer holding, attachment, or occlusion order unless the prompt states it.",
+    }
+
+
+def _offscreen_clause(element_id: str, trajectory: dict[str, Any]) -> str:
+    side = trajectory.get("exit_frame")
+    if side:
+        return (
+            f"{element_id} continues completely beyond the {side} edge of the frame until it is no longer visible; "
+            "do not stop it at the canvas boundary."
+        )
+    side = trajectory.get("enter_frame")
+    if side:
+        return (
+            f"{element_id} begins outside the {side} edge of the frame and enters into view from that side; "
+            "do not clamp its starting trajectory to the visible canvas."
+        )
+    return ""
+
+
+def _relation_clause(element_id: str, relation: dict[str, Any]) -> str:
+    target = relation.get("target", "the other element")
+    change = relation.get("change")
+    if change == "separates_from":
+        return (
+            f"{element_id} starts strongly overlapping or geometrically contained within {target}, then separates "
+            "from it and moves independently. Treat them as distinct identities."
+        )
+    if change == "joins_or_overlaps":
+        return (
+            f"{element_id} starts separate from {target}, then moves into strong overlap with it while remaining "
+            "a distinct identity."
+        )
+    if change == "strong_overlap_persists":
+        return (
+            f"{element_id} remains strongly overlapping with {target} across the trajectory; preserve both distinct "
+            "identities and do not merge them."
+        )
+    return ""
 
 
 def _trajectory_action(element_id: str, trajectory: dict[str, Any]) -> str:
@@ -225,6 +468,16 @@ def _trajectory_summary_lines(label: str, trajectory: dict[str, Any], reinforcem
     if screen_motion != "stable" and trajectory.get("dominant_change") != "scale":
         lines.append(f"{label}'s screen-space center also moves {screen_motion.replace('_', '-')} across the frame.")
 
+    side = trajectory.get("exit_frame")
+    if side:
+        lines.append(
+            f"{label} exits completely beyond the {side} edge by END and is no longer visible; "
+            "the visible canvas boundary is not a stopping point."
+        )
+    side = trajectory.get("enter_frame")
+    if side:
+        lines.append(f"{label} starts offscreen beyond the {side} edge and enters the visible frame from that side.")
+
     if reinforcement != "compact":
         anchor_labels = {
             "center_x": "horizontal center",
@@ -255,6 +508,7 @@ def install_schema_fixes(schema_module: Any) -> None:
     original_config = schema_module.sanitize_config
 
     def sanitize_layout(raw: Any, *, width_override: Any = None, height_override: Any = None):
+        source = _parse_source(raw)
         malformed = False
         if isinstance(raw, str):
             text = raw.strip()
@@ -275,6 +529,29 @@ def install_schema_fixes(schema_module: Any) -> None:
             height_override=height_override,
         )
         warnings = list(warnings)
+
+        if isinstance(source.get("timeline_experimental"), dict):
+            raw_boxes = source.get("boxes")
+            if not isinstance(raw_boxes, list):
+                raw_boxes = source.get("layout", {}).get("boxes") if isinstance(source.get("layout"), dict) else []
+            loose_start = _extract_box_map(schema_module, raw_boxes)
+            transition = source.get("transition") if isinstance(source.get("transition"), dict) else {}
+            loose_end = _extract_box_map(schema_module, transition.get("end_boxes"))
+            if loose_start:
+                layout["boxes"] = _merge_boxes(schema_module, layout.get("boxes"), loose_start)
+            if loose_end:
+                output_transition = layout.setdefault("transition", {})
+                output_transition.setdefault("end_canvas", copy.deepcopy(layout.get("canvas", {})))
+                output_transition["end_boxes"] = _merge_boxes(
+                    schema_module,
+                    output_transition.get("end_boxes"),
+                    loose_end,
+                )
+            if any(_is_offscreen_bbox(box) for box in [*loose_start.values(), *loose_end.values()]):
+                warnings.append(
+                    "Experimental timeline offscreen BBOX coordinates were preserved within the -1000..2000 overscan range."
+                )
+
         if malformed:
             warnings.insert(0, "Layout JSON could not be restored; defaults were loaded.")
         if not layout.get("boxes"):
@@ -311,6 +588,7 @@ def install_compiler_fixes(compiler_module: Any) -> None:
     def build_elements(layout, config, warnings):
         elements, layout_entries, sequence_items = original_build_elements(layout, config, warnings)
         element_map = {item["id"]: item for item in elements}
+        entry_map = {entry["slot"]: entry for entry in layout_entries}
         trajectory_map: dict[str, dict[str, Any]] = {}
 
         for entry in layout_entries:
@@ -322,13 +600,40 @@ def install_compiler_fixes(compiler_module: Any) -> None:
             trajectory = _trajectory_semantics(entry["start_bbox"], entry["end_bbox"], element)
             if trajectory is None:
                 continue
+            trajectory.update(_offscreen_semantics(entry["start_bbox"], entry["end_bbox"]))
             element["trajectory"] = trajectory
             trajectory_map[entry["slot"]] = trajectory
 
+        ids = [element_id for element_id in entry_map if element_id in element_map]
+        relation_by_subject: dict[str, list[dict[str, Any]]] = {}
+        for index, a_id in enumerate(ids):
+            for b_id in ids[index + 1:]:
+                result = _relation_for_pair(a_id, entry_map[a_id], b_id, entry_map[b_id])
+                if result is None:
+                    continue
+                subject_id, relation = result
+                relation_by_subject.setdefault(subject_id, []).append(relation)
+        for subject_id, relations in relation_by_subject.items():
+            element_map[subject_id]["relations"] = copy.deepcopy(relations)
+
         for item in sequence_items:
+            element = element_map.get(item.get("id"))
+            if element is None:
+                continue
             trajectory = trajectory_map.get(item.get("id"))
             if trajectory is not None:
                 item["action"] = _trajectory_action(item["id"], trajectory)
+            clauses: list[str] = []
+            if isinstance(trajectory, dict):
+                clause = _offscreen_clause(item["id"], trajectory)
+                if clause:
+                    clauses.append(clause)
+            for relation in element.get("relations", []):
+                clause = _relation_clause(item["id"], relation)
+                if clause:
+                    clauses.append(clause)
+            if clauses:
+                item["action"] = f"{item['action']} {' '.join(clauses)}"
 
         return elements, layout_entries, sequence_items
 
@@ -340,6 +645,7 @@ def install_compiler_fixes(compiler_module: Any) -> None:
         descriptions: list[str] = []
         compact_positions: list[str] = []
         trajectory_lines: list[str] = []
+        relation_lines: list[str] = []
         include_vertical = reinforcement == "strong"
 
         for entry in layout_entries:
@@ -363,10 +669,24 @@ def install_compiler_fixes(compiler_module: Any) -> None:
             trajectory = element.get("trajectory")
             if isinstance(trajectory, dict):
                 trajectory_lines.extend(_trajectory_summary_lines(label, trajectory, reinforcement))
+            for relation in element.get("relations", []):
+                target = relation.get("target", "the other element")
+                change = relation.get("change")
+                if change == "separates_from":
+                    relation_lines.append(
+                        f"{label} begins strongly overlapping or geometrically contained within {target}, then "
+                        "separates from it by END. Keep both identities distinct; geometry alone does not imply holding."
+                    )
+                elif change == "joins_or_overlaps":
+                    relation_lines.append(
+                        f"{label} begins separate from {target}, then moves into strong overlap by END while remaining distinct."
+                    )
+                elif change == "strong_overlap_persists":
+                    relation_lines.append(
+                        f"{label} remains strongly overlapping with {target}; preserve both identities without merging them."
+                    )
 
-        # Element identity/appearance must survive every natural-language
-        # reinforcement level. Compact may omit redundancy, not semantics.
-        insertion = [*descriptions, *compact_positions, *trajectory_lines]
+        insertion = [*descriptions, *compact_positions, *trajectory_lines, *relation_lines]
         if insertion:
             prefix_count = 0 if reinforcement == "compact" else 1
             lines[prefix_count:prefix_count] = insertion
