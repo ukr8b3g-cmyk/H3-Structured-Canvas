@@ -37,16 +37,6 @@ jobs:
           node --check web/zzzz_h3sc_correctness_cleanup.js
           node --check web/zzzzz_h3sc_timeline_experimental.js
           node --check web/zzzzzz_h3sc_timeline_fix.js
-      - name: Endpoint fix hashes
-        shell: bash
-        run: |
-          python - <<'PY'
-          import hashlib
-          from pathlib import Path
-          for name in ['tests/test_timeline_endpoint_fix.py', 'web/zzzzzz_h3sc_timeline_fix.js']:
-              data = Path(name).read_bytes().replace(b'\r\n', b'\n')
-              print(hashlib.sha256(data).hexdigest(), name)
-          PY
       - name: Package manifest
         shell: bash
         run: python tools/verify_manifest.py
