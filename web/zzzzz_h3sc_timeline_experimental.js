@@ -261,10 +261,12 @@ function setEditPointBox(controller, slot, rawBox) {
   const box = normalizeBox({ bbox_2d: rawBox }, slot);
   if (!exp || !point || !box || !VISIBLE_SLOTS.includes(slot)) return false;
   const track = exp.tracks[slot] ?? (exp.tracks[slot] = { start: null, mid: null, end: null, midExplicit: false });
+  const creatingNewTrack = controller.drag?.mode === "draw" && controller.drag?.creatingNewTrack;
 
   // A new slot is initialized identically at START/MID/END regardless of which
-  // edit point created it. After creation all three points are independent.
-  if (trackIsEmpty(track)) {
+  // edit point created it. During a brand-new draw, every pointermove updates the shared initial geometry;
+  // pointerup supplies the authoritative final rectangle. After creation all three points are independent.
+  if (creatingNewTrack || trackIsEmpty(track)) {
     track.start = cloneBox(box);
     track.mid = null;
     track.end = cloneBox(box);
@@ -430,8 +432,12 @@ function wireCanvasEvents(controller) {
     if (event.button !== 0) return; event.preventDefault(); event.stopPropagation(); canvas.focus();
     if (!isEditPoint(exp.t)) { updateTimelineUI(controller); return; }
     canvas.setPointerCapture?.(event.pointerId); const point = controller.eventPoint(event), hit = hitTest(controller, point);
-    if (hit) { controller.state.canvas.active_slot = hit.box.slot; exp.selectedSlot = hit.box.slot; controller.drag = { pointerId: event.pointerId, mode: hit.mode, handle: hit.handle, start: point, original: [...hit.box.bbox_2d] }; }
-    else if (controller.drawMode) { exp.selectedSlot = controller.activeSlot; controller.drag = { pointerId: event.pointerId, mode: "draw", start: point, original: null }; }
+    if (hit) { controller.state.canvas.active_slot = hit.box.slot; exp.selectedSlot = hit.box.slot; controller.drag = { pointerId: event.pointerId, mode: hit.mode, handle: hit.handle, start: point, original: [...hit.box.bbox_2d], creatingNewTrack: false }; }
+    else if (controller.drawMode) {
+      exp.selectedSlot = controller.activeSlot;
+      const creatingNewTrack = trackIsEmpty(exp.tracks[controller.activeSlot]);
+      controller.drag = { pointerId: event.pointerId, mode: "draw", start: point, original: null, creatingNewTrack };
+    }
     else { exp.selectedSlot = null; controller.drag = null; }
     controller.updateControls?.(); drawCanvas(controller);
   };
