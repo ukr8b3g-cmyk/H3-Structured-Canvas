@@ -50,9 +50,9 @@ function currentWarning(node) {
   if (parseStatus(controller.stateWidget?.value).malformed) {
     return language ? "⚠ 内部JSONを復元できなかったため、初期値を使用しています。" : "⚠ Internal JSON could not be restored; defaults are being used.";
   }
-  if (node.type === "H3StructuredCanvas" && Array.isArray(controller.state?.boxes) && controller.state.boxes.length === 0) {
-    return language ? "⚠ 有効なBBOXがありません。空間レイアウト指示は生成されません。" : "⚠ No active BBOX elements. No spatial layout guidance will be emitted.";
-  }
+  // Experimental Timeline intentionally keeps an empty Canvas visually stable.
+  // No-active-BBOX remains a backend compiler warning, but is not rendered here
+  // because adding/removing the warning changes the node/UI height during editing.
   return "";
 }
 
