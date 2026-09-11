@@ -239,8 +239,16 @@ function setEndpointBox(controller, slot, rawBox) {
   if (!exp || !endpoint || !box || !VISIBLE_SLOTS.includes(slot)) return false;
   const track = exp.tracks[slot] ?? (exp.tracks[slot] = { start: null, end: null });
   const state = exp.editState[slot] ?? (exp.editState[slot] = { linked: true, provisional: true });
+  const drawingNewTrack = controller.drag?.mode === "draw" && state.provisional;
 
-  if (endpoint === "start") {
+  // A brand-new draw stays provisional until pointerup. Keep START and END
+  // identical while dragging regardless of which endpoint initiated the draw,
+  // so an early 1x1/seed box can never become the opposite endpoint.
+  if (drawingNewTrack) {
+    track.start = cloneBox(box);
+    track.end = cloneBox(box);
+    state.linked = true;
+  } else if (endpoint === "start") {
     track.start = cloneBox(box);
     if (state.linked || state.provisional || !track.end) track.end = cloneBox(box);
     state.provisional = false;
@@ -419,7 +427,44 @@ function wireCanvasEvents(controller) {
     else { let [x1, y1, x2, y2] = controller.drag.original; if (controller.drag.handle.includes("n")) y1 = point.y; if (controller.drag.handle.includes("s")) y2 = point.y; if (controller.drag.handle.includes("w")) x1 = point.x; if (controller.drag.handle.includes("e")) x2 = point.x; box = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)]; }
     if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) setEndpointBox(controller, exp.selectedSlot ?? controller.activeSlot, box);
   };
-  const finish = (event) => { if (!controller.drag || event.pointerId !== controller.drag.pointerId) return; const slot = exp.selectedSlot; const box = slot ? controller.state.boxes.find((item) => item.slot === slot) : null; if (controller.drag.mode === "draw" && (!box || box.bbox_2d[2] - box.bbox_2d[0] < 12 || box.bbox_2d[3] - box.bbox_2d[1] < 12)) removeSlot(controller, slot); controller.drag = null; writeExperimentalState(controller); };
+  const finish = (event) => {
+    if (!controller.drag || event.pointerId !== controller.drag.pointerId) return;
+    const drag = controller.drag;
+    const slot = exp.selectedSlot;
+
+    // Pointerup is authoritative for a new draw. Recompute the final rectangle
+    // from the actual release position so START-first and END-first creation
+    // are perfectly symmetric and neither can preserve an early seed box.
+    if (drag.mode === "draw" && slot) {
+      const point = controller.eventPoint(event);
+      const finalBox = [
+        Math.min(drag.start.x, point.x),
+        Math.min(drag.start.y, point.y),
+        Math.max(drag.start.x, point.x),
+        Math.max(drag.start.y, point.y),
+      ];
+      if (finalBox[2] - finalBox[0] >= 1 && finalBox[3] - finalBox[1] >= 1) {
+        setEndpointBox(controller, slot, finalBox);
+      }
+    }
+
+    const box = slot ? controller.state.boxes.find((item) => item.slot === slot) : null;
+    const tooSmall = !box || box.bbox_2d[2] - box.bbox_2d[0] < 12 || box.bbox_2d[3] - box.bbox_2d[1] < 12;
+    if (drag.mode === "draw" && tooSmall) {
+      removeSlot(controller, slot);
+    } else if (drag.mode === "draw" && slot) {
+      const state = exp.editState[slot];
+      if (state?.provisional && box) {
+        const track = exp.tracks[slot];
+        track.start = cloneBox(box);
+        track.end = cloneBox(box);
+        state.provisional = false;
+        state.linked = true;
+      }
+    }
+    controller.drag = null;
+    writeExperimentalState(controller);
+  };
   canvas.onpointerup = finish; canvas.onpointercancel = finish;
   canvas.onkeydown = (event) => { if ((event.key === "Delete" || event.key === "Backspace") && exp.selectedSlot && isEndpoint(exp.t)) { event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.(); removeSlot(controller, exp.selectedSlot); } };
 }
