@@ -2,7 +2,7 @@ name: validate
 
 on:
   push:
-    branches: [main]
+    branches: [main, experimental/3-slot-timeline-v1]
   pull_request:
 
 jobs:
