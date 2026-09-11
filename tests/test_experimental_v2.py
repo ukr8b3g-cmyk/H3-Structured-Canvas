@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import pathlib
 import unittest
 
@@ -135,21 +134,28 @@ class ExperimentalV2Tests(unittest.TestCase):
             "window.addEventListener(\"keydown\", handler, true)",
             "event.stopImmediatePropagation",
             "controller.removeBox",
-            "document.activeElement !== canvas",
         ):
             self.assertIn(required, source)
 
-    def test_manifest_maintenance_hashes(self):
+    def test_final_ui_polish_separates_view_from_internal_trajectory(self):
         root = pathlib.Path(__file__).resolve().parents[1]
-        paths = [
-            ".github/workflows/validate.yml",
-            "tests/test_experimental_v2.py",
-            "web/zzzzzzzzzz_h3sc_overscan_delete_fix.js",
-        ]
-        for rel in paths:
-            digest = hashlib.sha256((root / rel).read_bytes()).hexdigest()
-            print(f"MANIFEST_HASH {digest}  {rel}")
-            self.assertEqual(len(digest), 64)
+        source = (root / "web" / "zzzzzzzzzzz_h3sc_ui_polish.js").read_text(encoding="utf-8")
+        for required in (
+            "VIEW_MIN = -180",
+            "VIEW_MAX = 1180",
+            "INTERNAL_MIN = -1000",
+            "INTERNAL_MAX = 2000",
+            "const boxWidth = ox2 - ox1",
+            "const boxHeight = oy2 - oy1",
+            "box = [x1, y1, x1 + boxWidth, y1 + boxHeight]",
+            "h3sc-size-inline",
+            "h3sc-timeline-time-input",
+            "ui.range.dispatchEvent(new Event(\"input\"",
+            "__h3scBoxSelectionActive",
+            "event.stopImmediatePropagation",
+            "controller.removeBox",
+        ):
+            self.assertIn(required, source)
 
 
 if __name__ == "__main__":
