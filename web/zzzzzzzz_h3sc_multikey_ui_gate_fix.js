@@ -10,6 +10,7 @@ const INTERNAL_MAX = 2000;
 const VIEW_MIN = -100;
 const VIEW_MAX = 1100;
 const VIEW_SPAN = VIEW_MAX - VIEW_MIN;
+const CLICK_DRAW_MOVE_EPS = 4;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 function normalizeTrack(track) { if (!track) return null; track.keys = Array.isArray(track.keys) ? track.keys : []; return track; }
@@ -57,9 +58,14 @@ function eventPoint(canvas, event) {
   return {
     x: clamp(VIEW_MIN + (event.clientX - rect.left) / Math.max(rect.width, 1) * VIEW_SPAN, INTERNAL_MIN, INTERNAL_MAX),
     y: clamp(VIEW_MIN + (event.clientY - rect.top) / Math.max(rect.height, 1) * VIEW_SPAN, INTERNAL_MIN, INTERNAL_MAX),
+    px: event.clientX - rect.left,
+    py: event.clientY - rect.top,
     rect,
   };
 }
+function pointDistance(a, b) { if (!a || !b) return Infinity; return Math.hypot(Number(a.px) - Number(b.px), Number(a.py) - Number(b.py)); }
+function rectFromPoints(a, b) { return [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)]; }
+function validFinalBox(box, minSize = 12) { return Array.isArray(box) && box[2] - box[0] >= minSize && box[3] - box[1] >= minSize; }
 function hitTest(controller, point) {
   const boxes = [...(controller.state?.boxes ?? [])].reverse();
   const tx = 12 / Math.max(point.rect.width, 1) * VIEW_SPAN;
@@ -75,6 +81,25 @@ function hitTest(controller, point) {
   }
   return null;
 }
+function cancelPendingDraw(controller) { controller.__h3scMultiKeyGateFixPendingDraw = null; }
+function startPendingDraw(controller, point, slot) { controller.__h3scMultiKeyGateFixPendingDraw = { start: point, last: point, slot }; }
+function previewPendingDraw(controller, point) {
+  const pending = controller.__h3scMultiKeyGateFixPendingDraw;
+  if (!pending || typeof controller.upsertBox !== "function") return false;
+  pending.last = point;
+  const box = rectFromPoints(pending.start, point);
+  if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) { controller.upsertBox(pending.slot, box); return true; }
+  return false;
+}
+function finishPendingDraw(controller, point) {
+  const pending = controller.__h3scMultiKeyGateFixPendingDraw;
+  if (!pending || typeof controller.upsertBox !== "function") return false;
+  const box = rectFromPoints(pending.start, point);
+  cancelPendingDraw(controller);
+  if (validFinalBox(box)) { controller.upsertBox(pending.slot, box); controller.sync?.(); return true; }
+  forceMultiKeyEditState(controller);
+  return false;
+}
 function installCanvasGateFix(controller) {
   const canvas = controller?.canvas;
   if (!canvas || canvas.__h3scMultiKeyGateFixEvents) return;
@@ -85,42 +110,44 @@ function installCanvasGateFix(controller) {
     const exp = controller.__h3scTimelineExp;
     if (!exp || typeof controller.upsertBox !== "function") return;
     const point = eventPoint(canvas, event);
+    const pending = controller.__h3scMultiKeyGateFixPendingDraw;
+    if (pending) {
+      event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.();
+      finishPendingDraw(controller, point); forceMultiKeyEditState(controller); return;
+    }
     const hit = hitTest(controller, point);
     let slot = hit?.box?.slot ?? currentSlot(controller);
     if (!VISIBLE_SLOTS.includes(slot)) slot = "a";
     const track = currentTrack(controller, slot);
     const editable = canEdit(controller, slot);
     const canCreateAtEndpoint = trackEmpty(track) && (exp.t <= EPS || exp.t >= 1 - EPS);
-
     if (hit && editable) {
-      controller.__h3scMultiKeyGateFixDrag = { pointerId: event.pointerId, mode: hit.mode, handle: hit.handle, start: point, original: [...hit.box.bbox_2d], slot };
+      cancelPendingDraw(controller);
+      controller.__h3scMultiKeyGateFixDrag = { pointerId: event.pointerId, mode: hit.mode, handle: hit.handle, start: point, original: [...hit.box.bbox_2d], slot, moved: false };
     } else if (!hit && controller.drawMode && (editable || canCreateAtEndpoint)) {
-      controller.__h3scMultiKeyGateFixDrag = { pointerId: event.pointerId, mode: "draw", start: point, original: null, slot };
+      startPendingDraw(controller, point, slot);
+      controller.__h3scMultiKeyGateFixDrag = { pointerId: event.pointerId, mode: "draw", start: point, original: null, slot, moved: false };
     } else {
-      forceMultiKeyEditState(controller);
-      return;
+      forceMultiKeyEditState(controller); return;
     }
-
-    exp.selectedSlot = slot;
-    controller.activeSlot = slot;
-    controller.state.canvas.active_slot = slot;
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation?.();
-    canvas.setPointerCapture?.(event.pointerId);
-    forceMultiKeyEditState(controller);
+    exp.selectedSlot = slot; controller.activeSlot = slot; controller.state.canvas.active_slot = slot;
+    event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.();
+    canvas.setPointerCapture?.(event.pointerId); forceMultiKeyEditState(controller);
   };
 
   const move = (event) => {
     const drag = controller.__h3scMultiKeyGateFixDrag;
+    const pending = controller.__h3scMultiKeyGateFixPendingDraw;
+    if (!drag && pending) { const point = eventPoint(canvas, event); previewPendingDraw(controller, point); forceMultiKeyEditState(controller); return; }
     if (!drag || drag.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation?.();
+    event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.();
     const point = eventPoint(canvas, event);
+    drag.moved = drag.moved || pointDistance(drag.start, point) >= CLICK_DRAW_MOVE_EPS;
     let box;
     if (drag.mode === "draw") {
-      box = [Math.min(drag.start.x, point.x), Math.min(drag.start.y, point.y), Math.max(drag.start.x, point.x), Math.max(drag.start.y, point.y)];
+      box = rectFromPoints(drag.start, point);
+      if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) previewPendingDraw(controller, point);
+      forceMultiKeyEditState(controller); return;
     } else if (drag.mode === "move") {
       const [x1, y1, x2, y2] = drag.original, width = x2 - x1, height = y2 - y1;
       const nx = clamp(x1 + point.x - drag.start.x, INTERNAL_MIN, INTERNAL_MAX - width);
@@ -141,29 +168,35 @@ function installCanvasGateFix(controller) {
   const finish = (event) => {
     const drag = controller.__h3scMultiKeyGateFixDrag;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation?.();
+    event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.();
     if (drag.mode === "draw") {
       const point = eventPoint(canvas, event);
-      const box = [Math.min(drag.start.x, point.x), Math.min(drag.start.y, point.y), Math.max(drag.start.x, point.x), Math.max(drag.start.y, point.y)];
-      if (box[2] - box[0] >= 12 && box[3] - box[1] >= 12) controller.upsertBox(drag.slot, box);
+      const box = rectFromPoints(drag.start, point);
+      if (validFinalBox(box) && drag.moved) finishPendingDraw(controller, point);
+      else startPendingDraw(controller, drag.start, drag.slot);
+    } else {
+      controller.sync?.(); cancelPendingDraw(controller);
     }
-    controller.__h3scMultiKeyGateFixDrag = null;
-    controller.sync?.();
-    forceMultiKeyEditState(controller);
+    controller.__h3scMultiKeyGateFixDrag = null; forceMultiKeyEditState(controller);
+  };
+
+  const cancel = (event) => {
+    const drag = controller.__h3scMultiKeyGateFixDrag;
+    if (drag && drag.pointerId === event.pointerId) controller.__h3scMultiKeyGateFixDrag = null;
+    cancelPendingDraw(controller); forceMultiKeyEditState(controller);
   };
 
   canvas.addEventListener("pointerdown", begin, true);
   canvas.addEventListener("pointermove", move, true);
   canvas.addEventListener("pointerup", finish, true);
-  canvas.addEventListener("pointercancel", finish, true);
+  canvas.addEventListener("pointercancel", cancel, true);
   controller.__h3scMultiKeyGateFixCleanup = () => {
     canvas.removeEventListener("pointerdown", begin, true);
     canvas.removeEventListener("pointermove", move, true);
     canvas.removeEventListener("pointerup", finish, true);
-    canvas.removeEventListener("pointercancel", finish, true);
+    canvas.removeEventListener("pointercancel", cancel, true);
     canvas.__h3scMultiKeyGateFixEvents = false;
+    cancelPendingDraw(controller);
   };
 }
 function install(node) {
@@ -178,9 +211,7 @@ function install(node) {
   if (previousUpdate) controller.updateControls = () => { previousUpdate(); installCanvasGateFix(controller); forceMultiKeyEditState(controller); };
   if (previousReload) controller.reloadFromWidgets = () => { previousReload(); installCanvasGateFix(controller); forceMultiKeyEditState(controller); };
   controller.destroy = () => { controller.__h3scMultiKeyGateFixCleanup?.(); previousDestroy?.(); };
-  installCanvasGateFix(controller);
-  forceMultiKeyEditState(controller);
-  return true;
+  installCanvasGateFix(controller); forceMultiKeyEditState(controller); return true;
 }
 function patchWhenReady(node, attempts = 96) {
   if (install(node) || attempts <= 0) return;
