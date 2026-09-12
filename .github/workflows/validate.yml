@@ -40,17 +40,4 @@ jobs:
           node --check web/zzzzzzz_h3sc_multikey_timeline.js
       - name: Package manifest
         shell: bash
-        run: |
-          if ! python tools/verify_manifest.py; then
-            python - <<'PY'
-          import hashlib
-          from pathlib import Path
-          for name in (
-              "web/zzzzzzz_h3sc_multikey_timeline.js",
-              "tests/test_multikey_timeline.py",
-          ):
-              path = Path(name)
-              print(f"ACTUAL_SHA256 {hashlib.sha256(path.read_bytes()).hexdigest()}  {name}")
-          PY
-            exit 1
-          fi
+        run: python tools/verify_manifest.py
