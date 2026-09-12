@@ -36,6 +36,21 @@ function normalizeDuration(value) {
   return clamp(Math.round(safe / DURATION_STEP) * DURATION_STEP, DURATION_MIN, DURATION_MAX);
 }
 
+function hasV4Timeline(rawValue) {
+  const raw = parseObject(rawValue);
+  const timeline = parseObject(raw.timeline_experimental);
+  return Number(timeline.version) >= 4;
+}
+
+function bestMultiKeyRaw(controller, node, preferred = null) {
+  const widgetRaw = controller?.stateWidget?.value;
+  const savedRaw = node?.properties?.h3scMultiKeyState?.layout_json;
+  for (const candidate of [preferred, widgetRaw, savedRaw]) {
+    if (candidate != null && hasV4Timeline(candidate)) return candidate;
+  }
+  return preferred ?? widgetRaw ?? savedRaw;
+}
+
 function cloneBox(box) {
   return box ? { ...box, bbox_2d: [...box.bbox_2d] } : null;
 }
@@ -263,6 +278,13 @@ function saveState(controller) {
     widget.options = widget.options || {};
     widget.options.serialize = true;
     widget.callback?.(raw, app?.canvas, controller.node, [0, 0], null);
+  }
+  const node = controller.node;
+  if (node) {
+    node.properties = node.properties || {};
+    node.properties.h3scMultiKeyState = { version: 4, layout_json: raw };
+    const widgetIndex = node.widgets?.indexOf(widget) ?? -1;
+    if (Array.isArray(node.widgets_values) && widgetIndex >= 0) node.widgets_values[widgetIndex] = raw;
   }
   controller.node?.setDirtyCanvas?.(true, true);
   app?.graph?.setDirtyCanvas?.(true, true);
@@ -509,6 +531,24 @@ function syncMarkerSelection(controller) {
     const selected = marker.dataset.slot === activeSlot && Number.isFinite(time) && Math.abs(time - exp.t) <= EPS;
     marker.classList.toggle("active", selected);
   }
+}
+
+function expectedMarkerSignature(controller) {
+  const exp = controller.__h3scTimelineExp;
+  if (!exp) return "";
+  const parts = [];
+  for (const slot of VISIBLE_SLOTS) {
+    const keys = (exp.tracks?.[slot]?.keys ?? []).slice().sort((a, b) => a.time - b.time);
+    keys.forEach((key, index) => parts.push(`${slot}:${index}:${Number(key.time).toFixed(6)}`));
+  }
+  return parts.join("|");
+}
+
+function renderedMarkerSignature(ui) {
+  if (!ui?.layer) return "";
+  return [...ui.layer.querySelectorAll(".h3sc-mk-marker.key")]
+    .map((marker) => `${marker.dataset.slot}:${marker.dataset.index}:${Number(marker.dataset.time).toFixed(6)}`)
+    .join("|");
 }
 
 function renderMarkers(controller) {
@@ -913,7 +953,7 @@ function install(node, configuredRaw = null) {
 
   controller.render = () => {
     previousRender();
-    upgradeState(controller, controller.stateWidget?.value);
+    upgradeState(controller, bestMultiKeyRaw(controller, node));
     controller.__h3scMultiUI = buildUI(controller);
     bindCanvas(controller);
     refreshAll(controller, true);
@@ -921,16 +961,25 @@ function install(node, configuredRaw = null) {
 
   controller.updateControls = () => {
     previousUpdate();
-    updateUI(controller, false);
+    const ui = controller.__h3scMultiUI;
+    const liveUI = Boolean(ui?.section?.isConnected && ui?.layer?.isConnected && controller.root?.contains(ui.section));
+    if (!liveUI) {
+      controller.__h3scMultiUI = buildUI(controller);
+      bindCanvas(controller);
+      updateUI(controller, true);
+      return;
+    }
+    updateUI(controller, expectedMarkerSignature(controller) !== renderedMarkerSignature(ui));
   };
 
   if (previousReload) {
     controller.reloadFromWidgets = () => {
+      const raw = bestMultiKeyRaw(controller, node);
       previousReload();
-      upgradeState(controller, controller.stateWidget?.value);
+      upgradeState(controller, raw);
       controller.__h3scMultiUI = buildUI(controller);
       bindCanvas(controller);
-      refreshAll(controller, true);
+      saveState(controller);
     };
   }
 
@@ -963,7 +1012,52 @@ function install(node, configuredRaw = null) {
   return true;
 }
 
+function repairMultiKeyUI(controller) {
+  if (!controller?.root || !controller.__h3scTimelineExp) return;
+  const ui = controller.__h3scMultiUI;
+  const liveUI = Boolean(ui?.section?.isConnected && ui?.layer?.isConnected && controller.root.contains(ui.section));
+  if (!liveUI) {
+    controller.__h3scMultiUI = buildUI(controller);
+    bindCanvas(controller);
+    refreshAll(controller, true);
+    return;
+  }
+  if (expectedMarkerSignature(controller) !== renderedMarkerSignature(ui)) renderMarkers(controller);
+  else syncMarkerSelection(controller);
+}
+
+function restoreInstalled(node, raw = null) {
+  const controller = node?.__h3scController;
+  if (!controller || !node.__h3scMultiKeyInstalled) return false;
+  const source = bestMultiKeyRaw(controller, node, raw);
+  if (source != null) upgradeState(controller, source);
+  repairMultiKeyUI(controller);
+  saveState(controller);
+  return true;
+}
+
+function repairVisibleMultiKeyNodes() {
+  for (const node of app?.graph?._nodes ?? []) {
+    if (!node?.__h3scMultiKeyInstalled) continue;
+    const controller = node.__h3scController;
+    if (!controller?.root?.isConnected) continue;
+    repairMultiKeyUI(controller);
+  }
+}
+
+function installLifecycleRepairHooks() {
+  if (window.__h3scMultiKeyLifecycleRepair) return;
+  window.__h3scMultiKeyLifecycleRepair = true;
+  const repair = () => requestAnimationFrame(() => repairVisibleMultiKeyNodes());
+  window.addEventListener("focus", repair, true);
+  window.addEventListener("pageshow", repair, true);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) repair();
+  }, true);
+}
+
 function patchWhenReady(node, raw, attempts = 64) {
+  if (node?.__h3scMultiKeyInstalled) return restoreInstalled(node, raw);
   if (install(node, raw) || attempts <= 0) return;
   queueMicrotask(() => patchWhenReady(node, raw, attempts - 1));
 }
@@ -989,6 +1083,9 @@ function wrapNodeType(nodeType, nodeData) {
 if (app?.registerExtension) {
   app.registerExtension({
     name: EXTENSION_NAME,
+    setup() {
+      installLifecycleRepairHooks();
+    },
     beforeRegisterNodeDef(nodeType, nodeData) {
       if (nodeData.name === CANVAS_NODE) wrapNodeType(nodeType, nodeData);
     },

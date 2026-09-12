@@ -10,6 +10,7 @@ schema = __import__(f"{pkg.__name__}.schema", fromlist=["*"])
 compiler = __import__(f"{pkg.__name__}.compiler", fromlist=["*"])
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MULTIKEY_JS = ROOT / "web" / "zzzzzzz_h3sc_multikey_timeline.js"
+LEGACY_TIMELINE_JS = ROOT / "web" / "zzzzz_h3sc_timeline_experimental.js"
 
 
 def multikey_layout(duration=12.0):
@@ -129,6 +130,25 @@ class MultiKeyTimelineTests(unittest.TestCase):
         self.assertIn("marker.style.left = `${ref.time * 100}%`", source)
         self.assertIn("const lo = pos > 0 ? ordered[pos - 1].time + gap : gap", source)
         self.assertIn("const hi = pos < ordered.length - 1 ? ordered[pos + 1].time - gap : 1 - gap", source)
+
+    def test_multikey_survives_reload_reconfigure_and_tab_visibility_cycles(self):
+        source = MULTIKEY_JS.read_text(encoding="utf-8")
+        legacy = LEGACY_TIMELINE_JS.read_text(encoding="utf-8")
+        for required in (
+            'function bestMultiKeyRaw(controller, node, preferred = null)',
+            'node.properties.h3scMultiKeyState = { version: 4, layout_json: raw }',
+            'const raw = bestMultiKeyRaw(controller, node);',
+            'previousReload();\n      upgradeState(controller, raw);',
+            'if (node?.__h3scMultiKeyInstalled) return restoreInstalled(node, raw);',
+            'function expectedMarkerSignature(controller)',
+            'function renderedMarkerSignature(ui)',
+            'document.addEventListener("visibilitychange"',
+            'window.addEventListener("focus", repair, true)',
+        ):
+            self.assertIn(required, source)
+        self.assertIn('const preserveMultiKey = Number(currentTimeline.version) >= 4;', legacy)
+        self.assertIn('...clone(currentTimeline)', legacy)
+        self.assertIn('timeline_experimental: timelineExperimental', legacy)
 
 
 if __name__ == "__main__":

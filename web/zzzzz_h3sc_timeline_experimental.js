@@ -185,6 +185,9 @@ function buildExperimentState(controller, rawValue) {
 
 function serializedLayout(controller) {
   const exp = controller.__h3scTimelineExp;
+  const current = parseObject(controller.stateWidget?.value);
+  const currentTimeline = parseObject(current.timeline_experimental);
+  const preserveMultiKey = Number(currentTimeline.version) >= 4;
   const canvas = {
     ...(controller.state?.canvas ?? {}),
     width: clamp(Math.round(Number(controller.state?.canvas?.width) || 1024), 64, 16384),
@@ -208,12 +211,20 @@ function serializedLayout(controller) {
     if (track?.start) startBoxes.push(cloneBox(track.start));
     if (track?.end) endBoxes.push(cloneBox(track.end));
   }
-  return {
-    schema: controller.state?.schema ?? "h3_structured_canvas/0.9",
-    canvas,
-    boxes: startBoxes,
-    transition: { end_canvas: clone(canvas), end_boxes: endBoxes },
-    timeline_experimental: {
+  const timelineExperimental = preserveMultiKey
+    ? {
+      ...clone(currentTimeline),
+      version: 4,
+      slots: ["a", "b", "c"],
+      duration_seconds: exp.duration,
+      interpolation: currentTimeline.interpolation ?? "piecewise_linear",
+      canonical_time: currentTimeline.canonical_time ?? "normalized_0_1",
+      max_intermediate_keys: Number(currentTimeline.max_intermediate_keys) || 7,
+      mid_time: MID_TIME,
+      mid_boxes: Array.isArray(currentTimeline.mid_boxes) ? clone(currentTimeline.mid_boxes) : midBoxes,
+      coordinate_space: currentTimeline.coordinate_space ?? "normalized_0_1000_with_offscreen_overscan",
+    }
+    : {
       version: 3,
       slots: ["a", "b", "c"],
       duration_seconds: exp.duration,
@@ -222,7 +233,13 @@ function serializedLayout(controller) {
       mid_time: MID_TIME,
       mid_boxes: midBoxes,
       coordinate_space: "normalized_0_1000_with_offscreen_overscan",
-    },
+    };
+  return {
+    schema: controller.state?.schema ?? "h3_structured_canvas/0.9",
+    canvas,
+    boxes: startBoxes,
+    transition: { end_canvas: clone(canvas), end_boxes: endBoxes },
+    timeline_experimental: timelineExperimental,
   };
 }
 
