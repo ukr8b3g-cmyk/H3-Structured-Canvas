@@ -196,15 +196,19 @@ function saveState(controller) {
   applyPreview(controller);
 }
 
-function applyPreview(controller) {
+function applyPreview(controller, live = false) {
   const exp = controller.__h3scTimelineExp;
   if (!exp) return;
   controller.state.boxes = VISIBLE_SLOTS.map((slot) => previewBox(exp.tracks[slot], exp.t, slot)).filter(Boolean);
+  if (live) {
+    controller.draw?.();
+    return;
+  }
   updateUI(controller);
   controller.fitAndDraw?.();
 }
 
-function setBox(controller, slot, rawBox) {
+function setBox(controller, slot, rawBox, live = false) {
   const exp = controller.__h3scTimelineExp;
   const track = exp?.tracks?.[slot];
   const box = normalizeBox({ bbox_2d: rawBox }, slot);
@@ -230,7 +234,7 @@ function setBox(controller, slot, rawBox) {
   exp.selectedSlot = slot;
   controller.activeSlot = slot;
   controller.state.canvas.active_slot = slot;
-  applyPreview(controller);
+  applyPreview(controller, live);
   return true;
 }
 
@@ -633,7 +637,7 @@ function wireCanvas(controller) {
       box = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
     }
 
-    if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) setBox(controller, drag.slot, box);
+    if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) setBox(controller, drag.slot, box, true);
   };
 
   const finish = (event) => {
@@ -643,7 +647,7 @@ function wireCanvas(controller) {
     if (drag.mode === "draw") {
       const point = eventPoint(event);
       const box = [Math.min(drag.start.x, point.x), Math.min(drag.start.y, point.y), Math.max(drag.start.x, point.x), Math.max(drag.start.y, point.y)];
-      if (box[2] - box[0] >= 12 && box[3] - box[1] >= 12) setBox(controller, drag.slot, box);
+      if (box[2] - box[0] >= 12 && box[3] - box[1] >= 12) setBox(controller, drag.slot, box, true);
     }
     controller.__h3scMultiDrag = null;
     try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
