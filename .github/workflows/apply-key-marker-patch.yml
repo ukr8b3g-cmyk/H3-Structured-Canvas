@@ -27,6 +27,50 @@ jobs:
         run: |
           git apply --check .github/key-marker-polish.patch
           git apply .github/key-marker-polish.patch
+      - name: Update key marker regression contracts
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/test_multikey_timeline.py')
+          source = path.read_text(encoding='utf-8')
+          replacements = {
+              'self.assertIn("setPlayhead(controller, ref.time)", source)':
+                  'self.assertIn("selectKey(controller, slot, ref.time)", source)',
+              'self.assertIn("const rect = (ui.layer ?? ui.wrap).getBoundingClientRect()", source)':
+                  'self.assertIn("const rect = ui.layer.getBoundingClientRect()", source)',
+          }
+          for old, new in replacements.items():
+              if old not in source:
+                  raise SystemExit(f'missing stale test contract: {old}')
+              source = source.replace(old, new, 1)
+
+          marker_test = '''
+    def test_key_markers_are_slot_colored_persistent_and_selectable(self):
+        source = MULTIKEY_JS.read_text(encoding="utf-8")
+        for required in (
+            'const SLOT_COLORS = { a: "#ef4444", b: "#3b82f6", c: "#facc15" }',
+            'marker.className = `h3sc-mk-marker key slot-${slot}`',
+            'marker.style.background = SLOT_COLORS[slot]',
+            'marker.textContent = `${SLOT_LABELS[slot]}${index + 1}`',
+            'ui.layer.querySelectorAll(".h3sc-mk-marker.key")',
+            'selectKey(controller, slot, ref.time)',
+            'accent-color:#a7afb1',
+            'ui.state.textContent = `${SLOT_LABELS[slot]} KEY ${point.index + 1} · EDIT`',
+        ):
+            self.assertIn(required, source)
+        self.assertIn('c: "#facc15"', source)
+        self.assertIn('marker.className = `h3sc-mk-marker key slot-${slot}`', source)
+'''
+          if 'test_key_markers_are_slot_colored_persistent_and_selectable' not in source:
+              needle = '\n\nif __name__ == "__main__":\n'
+              if needle not in source:
+                  raise SystemExit('test insertion anchor missing')
+              source = source.replace(needle, '\n' + marker_test + needle, 1)
+
+          path.write_text(source, encoding='utf-8', newline='\n')
+          PY
       - name: Validate key marker behavior
         shell: bash
         env:
@@ -58,13 +102,17 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import hashlib
-          target = 'web/zzzzzzz_h3sc_multikey_timeline.js'
+
+          targets = {
+              'web/zzzzzzz_h3sc_multikey_timeline.js',
+              'tests/test_multikey_timeline.py',
+          }
           manifest = Path('PACKAGE_MANIFEST.sha256')
           output = []
           for line in manifest.read_text(encoding='utf-8').splitlines():
               digest, relative = line.split('  ', 1)
-              if relative == target:
-                  data = Path(target).read_bytes().replace(b'\r\n', b'\n')
+              if relative in targets:
+                  data = Path(relative).read_bytes().replace(b'\r\n', b'\n')
                   digest = hashlib.sha256(data).hexdigest()
               output.append(f'{digest}  {relative}')
           manifest.write_text('\n'.join(output) + '\n', encoding='utf-8', newline='\n')
@@ -75,6 +123,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add web/zzzzzzz_h3sc_multikey_timeline.js PACKAGE_MANIFEST.sha256
+          git add web/zzzzzzz_h3sc_multikey_timeline.js tests/test_multikey_timeline.py PACKAGE_MANIFEST.sha256
           git commit -m "feat(experimental): make multikey markers persistent and slot-colored"
           git push origin HEAD:experimental/multi-key-timeline-v1
