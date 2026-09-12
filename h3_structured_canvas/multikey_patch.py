@@ -148,6 +148,8 @@ def install_multikey_fixes(schema_module: Any, compiler_module: Any) -> None:
         return layout, warnings
 
     schema_module.sanitize_layout = sanitize_layout
+    # compiler.py imports sanitize_layout directly, so refresh that bound reference too.
+    compiler_module.sanitize_layout = sanitize_layout
 
     previous_build = compiler_module._build_elements
     previous_summary = compiler_module._resolved_summary
