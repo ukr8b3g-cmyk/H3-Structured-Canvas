@@ -109,6 +109,27 @@ class MultiKeyTimelineTests(unittest.TestCase):
         self.assertIn('controller.canvas?.classList.remove("h3sc-timeline-preview-only")', source)
         self.assertIn("canEditTrack", source)
 
+    def test_frontend_key_controls_are_intermediate_key_only(self):
+        source = MULTIKEY_JS.read_text(encoding="utf-8")
+        self.assertIn("function keyTimes(track)", source)
+        self.assertIn("const times = keyTimes(track);", source)
+        self.assertIn("exp.selectedSlot = slot;", source)
+        self.assertIn("ui.prev.disabled = count === 0", source)
+        self.assertIn("ui.next.disabled = count === 0", source)
+        self.assertIn('if (point.kind === "key") {', source)
+        self.assertIn("marker.onpointerdown = (event) => startMarkerDrag", source)
+        self.assertIn("setPlayhead(controller, ref.time)", source)
+        self.assertIn('if (point.kind === "key") {\n      deleteKey(controller);', source)
+
+    def test_key_marker_drag_prevents_stale_click_and_respects_neighbors(self):
+        source = MULTIKEY_JS.read_text(encoding="utf-8")
+        self.assertIn("const marker = event.currentTarget", source)
+        self.assertIn("const rect = (ui.layer ?? ui.wrap).getBoundingClientRect()", source)
+        self.assertIn("if (Math.abs(pendingX - startX) >= 2) moved = true", source)
+        self.assertIn("marker.style.left = `${ref.time * 100}%`", source)
+        self.assertIn("const lo = pos > 0 ? ordered[pos - 1].time + gap : gap", source)
+        self.assertIn("const hi = pos < ordered.length - 1 ? ordered[pos + 1].time - gap : 1 - gap", source)
+
 
 if __name__ == "__main__":
     unittest.main()
