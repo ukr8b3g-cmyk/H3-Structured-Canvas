@@ -14,6 +14,12 @@ from . import compiler as _compiler
 
 install_compiler_fixes(_compiler)
 
+# Experimental v4 multi-key overlay. This is isolated to the experimental branch;
+# legacy v2/v3 workflows continue through the consolidated correctness layer above.
+from .multikey_patch import install_multikey_fixes
+
+install_multikey_fixes(_schema, _compiler)
+
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 from .schema import PACKAGE_VERSION
 
