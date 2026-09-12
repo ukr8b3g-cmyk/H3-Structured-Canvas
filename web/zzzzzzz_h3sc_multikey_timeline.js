@@ -4,7 +4,6 @@ const app = appModule?.app ?? appModule;
 const CANVAS_NODE = "H3StructuredCanvas";
 const EXTENSION_NAME = "h3.structured.canvas.timeline.experimental.multikey";
 const VISIBLE_SLOTS = ["a", "b", "c"];
-const SLOT_COLORS = { a: "#ef4444", b: "#3b82f6", c: "#facc15" };
 const SLOT_LABELS = { a: "A", b: "B", c: "C" };
 const DURATION_MIN = 5.0;
 const DURATION_MAX = 15.0;
@@ -144,6 +143,7 @@ function serializeLayout(controller) {
   const ends = [];
   const keyframes = {};
   const mids = [];
+
   for (const slot of VISIBLE_SLOTS) {
     const track = exp.tracks[slot];
     syncLegacyMid(track);
@@ -154,11 +154,13 @@ function serializeLayout(controller) {
     const mid = keys.find((key) => Math.abs(key.time - 0.5) <= EPS);
     if (mid) mids.push(cloneBox(mid.bbox));
   }
+
   for (const slot of ["d", "e"]) {
     const track = exp.hiddenTracks?.[slot];
     if (track?.start) starts.push(cloneBox(track.start));
     if (track?.end) ends.push(cloneBox(track.end));
   }
+
   return {
     schema: current.schema ?? controller.state?.schema ?? "h3_structured_canvas/0.9",
     canvas,
@@ -207,6 +209,7 @@ function setBox(controller, slot, rawBox) {
   const track = exp?.tracks?.[slot];
   const box = normalizeBox({ bbox_2d: rawBox }, slot);
   if (!track || !box) return false;
+
   const point = pointAt(track, exp.t);
   const creating = controller.__h3scMultiDrag?.creating;
   if (creating || trackEmpty(track)) {
@@ -222,6 +225,7 @@ function setBox(controller, slot, rawBox) {
   } else {
     return false;
   }
+
   syncLegacyMid(track);
   exp.selectedSlot = slot;
   controller.activeSlot = slot;
@@ -262,7 +266,9 @@ function jumpKey(controller, direction) {
   const track = exp?.tracks?.[controller.activeSlot];
   if (!track) return;
   const times = orderedPoints(track).map((point) => point.time);
-  const target = direction < 0 ? [...times].reverse().find((time) => time < exp.t - EPS) : times.find((time) => time > exp.t + EPS);
+  const target = direction < 0
+    ? [...times].reverse().find((time) => time < exp.t - EPS)
+    : times.find((time) => time > exp.t + EPS);
   setPlayhead(controller, target ?? (direction < 0 ? times[0] : times.at(-1)));
 }
 
@@ -435,7 +441,11 @@ function renderMarkers(controller) {
     marker.style.left = `${point.time * 100}%`;
     if (Math.abs(point.time - exp.t) <= EPS) marker.classList.add("active");
     marker.title = `${point.kind.toUpperCase()} ${(point.time * exp.duration).toFixed(2)}s`;
-    marker.onclick = (event) => { event.preventDefault(); event.stopPropagation(); setPlayhead(controller, point.time); };
+    marker.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setPlayhead(controller, point.time);
+    };
     if (point.kind === "key") {
       marker.onpointerdown = (event) => {
         if (event.button !== 0) return;
@@ -495,6 +505,7 @@ function updateUI(controller) {
   controller.canvas?.classList.toggle("h3sc-timeline-preview-only", !point);
   const danger = controller.root?.querySelector(".h3sc-toolbar .h3sc-btn.danger");
   if (danger) danger.disabled = !point;
+
   if (point?.kind === "start") {
     ui.state.textContent = "START · EDIT";
     ui.note.textContent = "Start position is editable.";
@@ -520,13 +531,12 @@ function hitTest(controller, point) {
   const tx = 12 / Math.max(point.rect.width, 1) * VIEW_SPAN;
   const ty = 12 / Math.max(point.rect.height, 1) * VIEW_SPAN;
   for (const box of boxes) {
-    if (!VISIBLE_SLOTS.includes(box?.slot) || !Array.isArray(box?.bbox_2d)) continue;
     const [x1, y1, x2, y2] = box.bbox_2d;
     const corners = { nw: [x1, y1], ne: [x2, y1], se: [x2, y2], sw: [x1, y2] };
     for (const [handle, [x, y]] of Object.entries(corners)) {
       if (Math.abs(point.x - x) <= tx && Math.abs(point.y - y) <= ty) return { box, mode: "resize", handle };
     }
-    if (point.x >= x1 && point.x <= x2 && point.y >= y1 && point.y <= y2) return { box, mode: "move", handle: null };
+    if (point.x >= x1 && point.x <= x2 && point.y >= y1 && point.y <= y2) return { box, mode: "move" };
   }
   return null;
 }
@@ -535,6 +545,10 @@ function wireCanvas(controller) {
   const canvas = controller.canvas;
   const exp = controller.__h3scTimelineExp;
   if (!canvas || !exp) return;
+  if (controller.__h3scMultiCanvasElement === canvas) return;
+  controller.__h3scMultiCanvasCleanup?.();
+  controller.__h3scMultiCanvasElement = canvas;
+
   const eventPoint = (event) => {
     const rect = canvas.getBoundingClientRect();
     return {
@@ -543,37 +557,62 @@ function wireCanvas(controller) {
       rect,
     };
   };
-  canvas.onpointerdown = (event) => {
-    if (event.button !== 0) return;
+  const consume = (event) => {
     event.preventDefault();
     event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  };
+
+  const begin = (event) => {
+    if (event.button !== 0) return;
     const point = eventPoint(event);
     const hit = hitTest(controller, point);
+
     if (hit) {
       const slot = hit.box.slot;
       controller.activeSlot = slot;
       controller.state.canvas.active_slot = slot;
       exp.selectedSlot = slot;
-      if (!pointAt(exp.tracks[slot], exp.t)) return updateUI(controller);
-      controller.__h3scMultiDrag = { pointerId: event.pointerId, mode: hit.mode, handle: hit.handle, start: point, original: [...hit.box.bbox_2d], creating: false };
+      if (!pointAt(exp.tracks[slot], exp.t)) {
+        consume(event);
+        updateUI(controller);
+        return;
+      }
+      controller.__h3scMultiDrag = {
+        pointerId: event.pointerId,
+        mode: hit.mode,
+        handle: hit.handle,
+        start: point,
+        original: [...hit.box.bbox_2d],
+        creating: false,
+      };
     } else if (controller.drawMode) {
       const slot = controller.activeSlot;
       const track = exp.tracks[slot];
       const creating = trackEmpty(track);
-      if (!pointAt(track, exp.t) && !(creating && (exp.t <= EPS || exp.t >= 1 - EPS))) return updateUI(controller);
+      if (!pointAt(track, exp.t) && !(creating && (exp.t <= EPS || exp.t >= 1 - EPS))) {
+        consume(event);
+        updateUI(controller);
+        return;
+      }
       exp.selectedSlot = slot;
       controller.__h3scMultiDrag = { pointerId: event.pointerId, mode: "draw", start: point, creating };
     } else {
+      consume(event);
       return;
     }
+
+    consume(event);
     canvas.setPointerCapture?.(event.pointerId);
   };
-  canvas.onpointermove = (event) => {
+
+  const move = (event) => {
     const drag = controller.__h3scMultiDrag;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    event.preventDefault();
+    consume(event);
     const point = eventPoint(event);
     let box;
+
     if (drag.mode === "draw") {
       box = [Math.min(drag.start.x, point.x), Math.min(drag.start.y, point.y), Math.max(drag.start.x, point.x), Math.max(drag.start.y, point.y)];
     } else if (drag.mode === "move") {
@@ -585,17 +624,20 @@ function wireCanvas(controller) {
       box = [nx, ny, nx + width, ny + height];
     } else {
       let [x1, y1, x2, y2] = drag.original;
-      if (drag.handle?.includes("n")) y1 = point.y;
-      if (drag.handle?.includes("s")) y2 = point.y;
-      if (drag.handle?.includes("w")) x1 = point.x;
-      if (drag.handle?.includes("e")) x2 = point.x;
+      if (drag.handle.includes("n")) y1 = point.y;
+      if (drag.handle.includes("s")) y2 = point.y;
+      if (drag.handle.includes("w")) x1 = point.x;
+      if (drag.handle.includes("e")) x2 = point.x;
       box = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
     }
+
     if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) setBox(controller, exp.selectedSlot, box);
   };
+
   const finish = (event) => {
     const drag = controller.__h3scMultiDrag;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    consume(event);
     if (drag.mode === "draw") {
       const point = eventPoint(event);
       const box = [Math.min(drag.start.x, point.x), Math.min(drag.start.y, point.y), Math.max(drag.start.x, point.x), Math.max(drag.start.y, point.y)];
@@ -604,32 +646,54 @@ function wireCanvas(controller) {
     controller.__h3scMultiDrag = null;
     saveState(controller);
   };
-  canvas.onpointerup = finish;
-  canvas.onpointercancel = finish;
+
+  const cancel = (event) => {
+    const drag = controller.__h3scMultiDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    consume(event);
+    controller.__h3scMultiDrag = null;
+    applyPreview(controller);
+  };
+
+  canvas.addEventListener("pointerdown", begin, true);
+  canvas.addEventListener("pointermove", move, true);
+  canvas.addEventListener("pointerup", finish, true);
+  canvas.addEventListener("pointercancel", cancel, true);
+
+  controller.__h3scMultiCanvasCleanup = () => {
+    canvas.removeEventListener("pointerdown", begin, true);
+    canvas.removeEventListener("pointermove", move, true);
+    canvas.removeEventListener("pointerup", finish, true);
+    canvas.removeEventListener("pointercancel", cancel, true);
+    if (controller.__h3scMultiCanvasElement === canvas) controller.__h3scMultiCanvasElement = null;
+  };
 }
 
 function install(node, configuredRaw = null) {
   const controller = node?.__h3scController;
   if (!controller || !node.__h3scTimelineConsolidatedInstalled || node.__h3scMultiKeyInstalled) return false;
   node.__h3scMultiKeyInstalled = true;
+
   upgradeState(controller, configuredRaw ?? controller.stateWidget?.value);
   if (controller.__h3scDeleteHandler) window.removeEventListener("keydown", controller.__h3scDeleteHandler, true);
+
   const previousRender = controller.render.bind(controller);
   const previousUpdate = controller.updateControls.bind(controller);
   const previousReload = controller.reloadFromWidgets?.bind(controller);
   const previousDestroy = controller.destroy?.bind(controller);
+
   controller.sync = () => saveState(controller);
   controller.upsertBox = (slot, bbox) => { if (setBox(controller, slot, bbox)) saveState(controller); };
   controller.removeBox = (slot) => {
     const track = controller.__h3scTimelineExp?.tracks?.[slot];
-    if (track) {
-      track.start = null;
-      track.end = null;
-      track.keys = [];
-      syncLegacyMid(track);
-      saveState(controller);
-    }
+    if (!track) return;
+    track.start = null;
+    track.end = null;
+    track.keys = [];
+    syncLegacyMid(track);
+    saveState(controller);
   };
+
   controller.render = () => {
     previousRender();
     upgradeState(controller, controller.stateWidget?.value);
@@ -637,11 +701,13 @@ function install(node, configuredRaw = null) {
     wireCanvas(controller);
     applyPreview(controller);
   };
+
   controller.updateControls = () => {
     previousUpdate();
     wireCanvas(controller);
     updateUI(controller);
   };
+
   if (previousReload) {
     controller.reloadFromWidgets = () => {
       previousReload();
@@ -651,6 +717,7 @@ function install(node, configuredRaw = null) {
       applyPreview(controller);
     };
   }
+
   const keyHandler = (event) => {
     const target = event.target;
     if (event.key !== "Delete" && event.key !== "Backspace") return;
@@ -663,13 +730,16 @@ function install(node, configuredRaw = null) {
     event.stopImmediatePropagation?.();
     controller.removeBox(slot);
   };
+
   controller.__h3scMultiKeyHandler = keyHandler;
   window.addEventListener("keydown", keyHandler, true);
   controller.destroy = () => {
     stopPlayback(controller);
+    controller.__h3scMultiCanvasCleanup?.();
     window.removeEventListener("keydown", keyHandler, true);
     previousDestroy?.();
   };
+
   controller.render();
   return true;
 }
@@ -689,7 +759,7 @@ function wrapNodeType(nodeType, nodeData) {
   };
   const configured = nodeType.prototype.onConfigure;
   nodeType.prototype.onConfigure = function (info) {
-    const index = this.widgets?.findIndex((widget) => widget.name === "layout_json") ?? -1;
+    const index = this.widgets?.findIndex((w) => w.name === "layout_json") ?? -1;
     const raw = index >= 0 && Array.isArray(info?.widgets_values) ? info.widgets_values[index] : null;
     const result = configured?.apply(this, arguments);
     queueMicrotask(() => patchWhenReady(this, raw));
