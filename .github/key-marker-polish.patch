@@ -1,0 +1,238 @@
+--- a/web/zzzzzzz_h3sc_multikey_timeline.js
++++ b/web/zzzzzzz_h3sc_multikey_timeline.js
+@@ -5,6 +5,7 @@
+ const EXTENSION_NAME = "h3.structured.canvas.timeline.experimental.multikey";
+ const VISIBLE_SLOTS = ["a", "b", "c"];
+ const SLOT_LABELS = { a: "A", b: "B", c: "C" };
++const SLOT_COLORS = { a: "#ef4444", b: "#3b82f6", c: "#facc15" };
+ const DURATION_MIN = 5.0;
+ const DURATION_MAX = 15.0;
+ const DURATION_STEP = 0.5;
+@@ -283,6 +284,18 @@
+   setPlayhead(controller, clamp(Number(seconds) || 0, 0, exp.duration) / Math.max(exp.duration, 1e-9));
+ }
+ 
++function selectKey(controller, slot, time) {
++  const exp = controller.__h3scTimelineExp;
++  if (!exp?.tracks?.[slot]) return;
++  stopPlayback(controller);
++  controller.state.canvas.active_slot = slot;
++  exp.t = clamp(Number(time) || 0, 0, 1);
++  exp.selectedSlot = slot;
++  controller.updateControls?.();
++  refreshAll(controller, true);
++  controller.canvas?.focus?.();
++}
++
+ function setDuration(controller, value) {
+   const exp = controller.__h3scTimelineExp;
+   if (!exp) return;
+@@ -329,7 +342,7 @@
+   const target = direction < 0
+     ? [...times].reverse().find((time) => time < exp.t - EPS) ?? times[0]
+     : times.find((time) => time > exp.t + EPS) ?? times.at(-1);
+-  setPlayhead(controller, target);
++  selectKey(controller, controller.activeSlot, target);
+ }
+ 
+ function stopPlayback(controller) {
+@@ -374,12 +387,14 @@
+ .h3sc-mk-time{font:800 16px/1 ui-monospace,Consolas,monospace;min-width:65px;text-align:right}
+ .h3sc-mk-current,.h3sc-mk-num{height:28px;background:#101213;color:#eee;border:1px solid #4b4f50;border-radius:5px;padding:3px 6px;text-align:right}
+ .h3sc-mk-current{width:64px}.h3sc-mk-num{width:68px}
+-.h3sc-mk-range-wrap{position:relative;flex:1;min-width:150px}
+-.h3sc-mk-range{width:100%;accent-color:#48d5cf}
+-.h3sc-mk-layer{position:absolute;left:8px;right:8px;top:50%;height:0;pointer-events:none}
+-.h3sc-mk-marker{position:absolute;transform:translate(-50%,-50%) rotate(45deg);width:10px;height:10px;padding:0;border:1px solid #111;background:#48d5cf;pointer-events:auto;cursor:ew-resize}
+-.h3sc-mk-marker.end{width:8px;height:8px;background:#ddd;cursor:pointer}
+-.h3sc-mk-marker.active{outline:2px solid white;outline-offset:2px}
++.h3sc-mk-range-wrap{position:relative;flex:1;min-width:180px;height:54px;overflow:visible}
++.h3sc-mk-range{position:absolute;left:0;right:0;top:0;width:100%;z-index:1;accent-color:#a7afb1}
++.h3sc-mk-layer{position:absolute;left:9px;right:9px;top:25px;height:28px;pointer-events:none;z-index:4;overflow:visible}
++.h3sc-mk-marker{position:absolute;top:0;transform:translate(-50%,-50%);min-width:22px;height:16px;padding:0 3px;border:1px solid rgba(0,0,0,.9);border-radius:4px;background:#777;color:#fff;font:800 9px/14px ui-monospace,Consolas,monospace;text-align:center;pointer-events:auto;cursor:ew-resize;z-index:6;box-shadow:0 1px 3px rgba(0,0,0,.75);user-select:none}
++.h3sc-mk-marker:hover{filter:brightness(1.15);z-index:8}
++.h3sc-mk-marker.active{outline:2px solid #fff;outline-offset:2px;z-index:9}
++.h3sc-mk-marker.endpoint{min-width:16px;width:16px;height:16px;padding:0;border-radius:50%;background:#d8dddd;color:#151515;cursor:pointer;font-size:8px}
++.h3sc-mk-marker.slot-c{color:#151515}
+ .h3sc-mk-note{font-size:10px;color:#8f9697}
+ .h3sc-mk-note.warn{color:#e4b548}
+ .h3sc-mk-count{margin-left:auto;font:10px/1 ui-monospace,Consolas,monospace;color:#8f9697}
+@@ -484,31 +499,65 @@
+   return { section, play, time, current, range, layer, duration, add, del, prev, next, count, state, note, wrap };
+ }
+ 
++function syncMarkerSelection(controller) {
++  const exp = controller.__h3scTimelineExp;
++  const ui = controller.__h3scMultiUI;
++  if (!exp || !ui?.layer) return;
++  const activeSlot = controller.activeSlot;
++  for (const marker of ui.layer.querySelectorAll(".h3sc-mk-marker.key")) {
++    const time = Number(marker.dataset.time);
++    const selected = marker.dataset.slot === activeSlot && Number.isFinite(time) && Math.abs(time - exp.t) <= EPS;
++    marker.classList.toggle("active", selected);
++  }
++}
++
+ function renderMarkers(controller) {
+   const exp = controller.__h3scTimelineExp;
+   const ui = controller.__h3scMultiUI;
+-  const slot = controller.activeSlot;
+-  const track = exp?.tracks?.[slot];
+-  if (!ui?.layer || !track) return;
++  if (!ui?.layer || !exp) return;
+   ui.layer.replaceChildren();
+ 
+-  for (const point of orderedPoints(track)) {
+-    const marker = document.createElement("button");
+-    marker.className = `h3sc-mk-marker ${point.kind === "key" ? "" : "end"}`;
+-    marker.style.left = `${point.time * 100}%`;
+-    if (Math.abs(point.time - exp.t) <= EPS) marker.classList.add("active");
+-    marker.title = `${point.kind.toUpperCase()} ${(point.time * exp.duration).toFixed(2)}s`;
+-    if (point.kind === "key") {
+-      marker.onpointerdown = (event) => startMarkerDrag(controller, slot, point.index, event);
+-    } else {
++  const rowTop = { a: 0, b: 10, c: 20 };
++  for (const slot of VISIBLE_SLOTS) {
++    const track = exp.tracks?.[slot];
++    const keys = (track?.keys ?? []).slice().sort((a, b) => a.time - b.time);
++    keys.forEach((key, index) => {
++      const marker = document.createElement("button");
++      marker.className = `h3sc-mk-marker key slot-${slot}`;
++      marker.dataset.slot = slot;
++      marker.dataset.index = String(index);
++      marker.dataset.time = String(key.time);
++      marker.style.left = `${key.time * 100}%`;
++      marker.style.top = `${rowTop[slot]}px`;
++      marker.style.background = SLOT_COLORS[slot];
++      marker.textContent = `${SLOT_LABELS[slot]}${index + 1}`;
++      marker.setAttribute("aria-label", `${SLOT_LABELS[slot]} key ${index + 1}`);
++      marker.title = `${SLOT_LABELS[slot]} Key ${index + 1} · ${(key.time * exp.duration).toFixed(2)}s`;
++      marker.onpointerdown = (event) => startMarkerDrag(controller, slot, index, event);
++      ui.layer.append(marker);
++    });
++  }
++
++  const activeTrack = exp.tracks?.[controller.activeSlot];
++  if (activeTrack && !trackEmpty(activeTrack)) {
++    for (const [label, time] of [["S", 0], ["E", 1]]) {
++      const marker = document.createElement("button");
++      marker.className = "h3sc-mk-marker endpoint";
++      marker.style.left = `${time * 100}%`;
++      marker.style.top = "20px";
++      marker.textContent = label;
++      marker.setAttribute("aria-label", label === "S" ? "Start" : "End");
++      marker.title = label === "S" ? "START 0.00s" : `END ${exp.duration.toFixed(2)}s`;
+       marker.onclick = (event) => {
+         event.preventDefault();
+         event.stopPropagation();
+-        setPlayhead(controller, point.time);
++        setPlayhead(controller, time);
+       };
++      ui.layer.append(marker);
+     }
+-    ui.layer.append(marker);
+   }
++
++  syncMarkerSelection(controller);
+ }
+ 
+ function startMarkerDrag(controller, slot, index, event) {
+@@ -520,9 +569,13 @@
+   const ui = controller.__h3scMultiUI;
+   const ref = exp?.tracks?.[slot]?.keys?.[index];
+   const marker = event.currentTarget;
+-  if (!ref || !ui?.wrap) return;
++  if (!ref || !ui?.layer) return;
+ 
+-  const rect = (ui.layer ?? ui.wrap).getBoundingClientRect();
++  controller.state.canvas.active_slot = slot;
++  exp.selectedSlot = slot;
++  controller.updateControls?.();
++  const rect = ui.layer.getBoundingClientRect();
++  const pointerId = event.pointerId;
+   const startX = event.clientX;
+   let raf = 0;
+   let pendingX = startX;
+@@ -542,31 +595,49 @@
+     syncLegacyMid(live);
+     exp.t = ref.time;
+     exp.selectedSlot = slot;
+-    if (marker?.style) marker.style.left = `${ref.time * 100}%`;
++    if (marker?.style) {
++      marker.style.left = `${ref.time * 100}%`;
++      marker.dataset.time = String(ref.time);
++    }
+     drawPreview(controller);
+     updateUI(controller, false);
+   };
+ 
+   const move = (moveEvent) => {
++    if (moveEvent.pointerId !== pointerId) return;
+     pendingX = moveEvent.clientX;
+     if (Math.abs(pendingX - startX) >= 2) moved = true;
+     if (moved && !raf) raf = requestAnimationFrame(apply);
+   };
+ 
+-  const up = () => {
++  const cleanup = () => {
+     window.removeEventListener("pointermove", move, true);
+     window.removeEventListener("pointerup", up, true);
++    window.removeEventListener("pointercancel", cancel, true);
++  };
++
++  const up = (upEvent) => {
++    if (upEvent.pointerId !== pointerId) return;
++    cleanup();
+     if (raf) cancelAnimationFrame(raf);
+     if (moved) {
+       apply();
+       saveState(controller);
+     } else {
+-      setPlayhead(controller, ref.time);
++      selectKey(controller, slot, ref.time);
+     }
+   };
+ 
++  const cancel = (cancelEvent) => {
++    if (cancelEvent.pointerId !== pointerId) return;
++    cleanup();
++    if (raf) cancelAnimationFrame(raf);
++    selectKey(controller, slot, ref.time);
++  };
++
+   window.addEventListener("pointermove", move, true);
+   window.addEventListener("pointerup", up, true);
++  window.addEventListener("pointercancel", cancel, true);
+ }
+ 
+ function updateUI(controller, markers = true) {
+@@ -590,7 +661,9 @@
+   ui.range.value = String(Math.round(exp.t * 1000));
+   ui.duration.value = exp.duration.toFixed(1);
+   ui.play.textContent = exp.playing ? "■" : "▶";
+-  ui.count.textContent = `${SLOT_LABELS[slot] ?? "?"}: ${count}/${MAX_INTERMEDIATE_KEYS} keys`;
++  ui.count.textContent = VISIBLE_SLOTS
++    .map((item) => `${SLOT_LABELS[item]}:${exp.tracks?.[item]?.keys?.length ?? 0}`)
++    .join(" · ");
+   ui.del.disabled = point?.kind !== "key";
+   ui.add.disabled = !track || trackEmpty(track) || Boolean(point) || exp.t <= EPS || exp.t >= 1 - EPS || count >= MAX_INTERMEDIATE_KEYS;
+   ui.prev.disabled = count === 0;
+@@ -611,8 +684,8 @@
+     ui.note.textContent = `End position at ${exp.duration.toFixed(2)}s is editable.`;
+     ui.note.classList.remove("warn");
+   } else if (point?.kind === "key") {
+-    ui.state.textContent = `KEY ${point.index + 1} · EDIT`;
+-    ui.note.textContent = `Intermediate key at ${seconds.toFixed(2)}s is editable.`;
++    ui.state.textContent = `${SLOT_LABELS[slot]} KEY ${point.index + 1} · EDIT`;
++    ui.note.textContent = `${SLOT_LABELS[slot]}${point.index + 1} at ${seconds.toFixed(2)}s is editable. Drag its colored marker to retime.`;
+     ui.note.classList.remove("warn");
+   } else if (canCreate) {
+     ui.state.textContent = exp.t <= EPS ? "START · DRAW" : "END · DRAW";
+@@ -625,6 +698,7 @@
+   }
+ 
+   if (markers) renderMarkers(controller);
++  else syncMarkerSelection(controller);
+ }
+ 
+ function refreshAll(controller, markers = true) {
