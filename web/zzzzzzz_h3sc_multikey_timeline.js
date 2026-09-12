@@ -545,9 +545,9 @@ function wireCanvas(controller) {
   const canvas = controller.canvas;
   const exp = controller.__h3scTimelineExp;
   if (!canvas || !exp) return;
-  if (controller.__h3scMultiCanvasElement === canvas) return;
+  if (canvas.__h3scMultiCanvasEvents) return;
   controller.__h3scMultiCanvasCleanup?.();
-  controller.__h3scMultiCanvasElement = canvas;
+  canvas.__h3scMultiCanvasEvents = true;
 
   const eventPoint = (event) => {
     const rect = canvas.getBoundingClientRect();
@@ -565,6 +565,7 @@ function wireCanvas(controller) {
 
   const begin = (event) => {
     if (event.button !== 0) return;
+    controller.__h3scMultiDrag = null;
     const point = eventPoint(event);
     const hit = hitTest(controller, point);
 
@@ -585,6 +586,7 @@ function wireCanvas(controller) {
         start: point,
         original: [...hit.box.bbox_2d],
         creating: false,
+        slot,
       };
     } else if (controller.drawMode) {
       const slot = controller.activeSlot;
@@ -596,13 +598,13 @@ function wireCanvas(controller) {
         return;
       }
       exp.selectedSlot = slot;
-      controller.__h3scMultiDrag = { pointerId: event.pointerId, mode: "draw", start: point, creating };
+      controller.__h3scMultiDrag = { pointerId: event.pointerId, mode: "draw", start: point, creating, slot };
     } else {
-      consume(event);
       return;
     }
 
     consume(event);
+    canvas.focus?.();
     canvas.setPointerCapture?.(event.pointerId);
   };
 
@@ -631,7 +633,7 @@ function wireCanvas(controller) {
       box = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
     }
 
-    if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) setBox(controller, exp.selectedSlot, box);
+    if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) setBox(controller, drag.slot, box);
   };
 
   const finish = (event) => {
@@ -641,9 +643,10 @@ function wireCanvas(controller) {
     if (drag.mode === "draw") {
       const point = eventPoint(event);
       const box = [Math.min(drag.start.x, point.x), Math.min(drag.start.y, point.y), Math.max(drag.start.x, point.x), Math.max(drag.start.y, point.y)];
-      if (box[2] - box[0] >= 12 && box[3] - box[1] >= 12) setBox(controller, exp.selectedSlot, box);
+      if (box[2] - box[0] >= 12 && box[3] - box[1] >= 12) setBox(controller, drag.slot, box);
     }
     controller.__h3scMultiDrag = null;
+    try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
     saveState(controller);
   };
 
@@ -652,6 +655,7 @@ function wireCanvas(controller) {
     if (!drag || drag.pointerId !== event.pointerId) return;
     consume(event);
     controller.__h3scMultiDrag = null;
+    try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
     applyPreview(controller);
   };
 
@@ -665,7 +669,7 @@ function wireCanvas(controller) {
     canvas.removeEventListener("pointermove", move, true);
     canvas.removeEventListener("pointerup", finish, true);
     canvas.removeEventListener("pointercancel", cancel, true);
-    if (controller.__h3scMultiCanvasElement === canvas) controller.__h3scMultiCanvasElement = null;
+    canvas.__h3scMultiCanvasEvents = false;
   };
 }
 
@@ -704,7 +708,6 @@ function install(node, configuredRaw = null) {
 
   controller.updateControls = () => {
     previousUpdate();
-    wireCanvas(controller);
     updateUI(controller);
   };
 
