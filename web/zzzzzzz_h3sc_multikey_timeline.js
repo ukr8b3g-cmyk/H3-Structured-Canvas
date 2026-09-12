@@ -154,7 +154,10 @@ function upgradeState(controller, rawValue) {
 function serializeLayout(controller) {
   const exp = controller.__h3scTimelineExp;
   const current = parseObject(controller.stateWidget?.value);
-  const canvas = clone(current.canvas ?? controller.state?.canvas ?? {});
+  const canvas = {
+    ...clone(current.canvas ?? {}),
+    ...clone(controller.state?.canvas ?? {}),
+  };
   const starts = [];
   const ends = [];
   const keyframes = {};
@@ -239,7 +242,6 @@ function assignBox(controller, slot, rawBox, creating = false) {
 
   syncLegacyMid(track);
   exp.selectedSlot = slot;
-  controller.activeSlot = slot;
   controller.state.canvas.active_slot = slot;
   return true;
 }
@@ -684,7 +686,6 @@ function bindCanvas(controller) {
       }
     }
 
-    controller.activeSlot = slot;
     controller.state.canvas.active_slot = slot;
     exp.selectedSlot = slot;
     drag = {
