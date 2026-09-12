@@ -118,13 +118,13 @@ class MultiKeyTimelineTests(unittest.TestCase):
         self.assertIn("ui.next.disabled = count === 0", source)
         self.assertIn('if (point.kind === "key") {', source)
         self.assertIn("marker.onpointerdown = (event) => startMarkerDrag", source)
-        self.assertIn("setPlayhead(controller, ref.time)", source)
+        self.assertIn("selectKey(controller, slot, ref.time)", source)
         self.assertIn('if (point.kind === "key") {\n      deleteKey(controller);', source)
 
     def test_key_marker_drag_prevents_stale_click_and_respects_neighbors(self):
         source = MULTIKEY_JS.read_text(encoding="utf-8")
         self.assertIn("const marker = event.currentTarget", source)
-        self.assertIn("const rect = (ui.layer ?? ui.wrap).getBoundingClientRect()", source)
+        self.assertIn("const rect = ui.layer.getBoundingClientRect()", source)
         self.assertIn("if (Math.abs(pendingX - startX) >= 2) moved = true", source)
         self.assertIn("marker.style.left = `${ref.time * 100}%`", source)
         self.assertIn("const lo = pos > 0 ? ordered[pos - 1].time + gap : gap", source)
