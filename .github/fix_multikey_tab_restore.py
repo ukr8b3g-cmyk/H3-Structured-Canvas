@@ -1,0 +1,388 @@
+from pathlib import Path
+import hashlib
+
+
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected 1 match, got {count}")
+    return text.replace(old, new, 1)
+
+
+legacy_path = Path("web/zzzzz_h3sc_timeline_experimental.js")
+legacy = legacy_path.read_text(encoding="utf-8")
+legacy = replace_once(
+    legacy,
+    '''function serializedLayout(controller) {
+  const exp = controller.__h3scTimelineExp;
+  const canvas = {''',
+    '''function serializedLayout(controller) {
+  const exp = controller.__h3scTimelineExp;
+  const current = parseObject(controller.stateWidget?.value);
+  const currentTimeline = parseObject(current.timeline_experimental);
+  const preserveMultiKey = Number(currentTimeline.version) >= 4;
+  const canvas = {''',
+    "legacy v4 preservation header",
+)
+legacy = replace_once(
+    legacy,
+    '''  return {
+    schema: controller.state?.schema ?? "h3_structured_canvas/0.9",
+    canvas,
+    boxes: startBoxes,
+    transition: { end_canvas: clone(canvas), end_boxes: endBoxes },
+    timeline_experimental: {
+      version: 3,
+      slots: ["a", "b", "c"],
+      duration_seconds: exp.duration,
+      interpolation: "piecewise_linear",
+      canonical_time: "normalized_0_1",
+      mid_time: MID_TIME,
+      mid_boxes: midBoxes,
+      coordinate_space: "normalized_0_1000_with_offscreen_overscan",
+    },
+  };
+}''',
+    '''  const timelineExperimental = preserveMultiKey
+    ? {
+      ...clone(currentTimeline),
+      version: 4,
+      slots: ["a", "b", "c"],
+      duration_seconds: exp.duration,
+      interpolation: currentTimeline.interpolation ?? "piecewise_linear",
+      canonical_time: currentTimeline.canonical_time ?? "normalized_0_1",
+      max_intermediate_keys: Number(currentTimeline.max_intermediate_keys) || 7,
+      mid_time: MID_TIME,
+      mid_boxes: Array.isArray(currentTimeline.mid_boxes) ? clone(currentTimeline.mid_boxes) : midBoxes,
+      coordinate_space: currentTimeline.coordinate_space ?? "normalized_0_1000_with_offscreen_overscan",
+    }
+    : {
+      version: 3,
+      slots: ["a", "b", "c"],
+      duration_seconds: exp.duration,
+      interpolation: "piecewise_linear",
+      canonical_time: "normalized_0_1",
+      mid_time: MID_TIME,
+      mid_boxes: midBoxes,
+      coordinate_space: "normalized_0_1000_with_offscreen_overscan",
+    };
+  return {
+    schema: controller.state?.schema ?? "h3_structured_canvas/0.9",
+    canvas,
+    boxes: startBoxes,
+    transition: { end_canvas: clone(canvas), end_boxes: endBoxes },
+    timeline_experimental: timelineExperimental,
+  };
+}''',
+    "legacy v4 preservation serializer",
+)
+legacy_path.write_text(legacy, encoding="utf-8", newline="\n")
+
+
+multi_path = Path("web/zzzzzzz_h3sc_multikey_timeline.js")
+multi = multi_path.read_text(encoding="utf-8")
+
+multi = replace_once(
+    multi,
+    '''function normalizeDuration(value) {
+  const parsed = Number(value);
+  const safe = Number.isFinite(parsed) ? parsed : 5;
+  return clamp(Math.round(safe / DURATION_STEP) * DURATION_STEP, DURATION_MIN, DURATION_MAX);
+}
+''',
+    '''function normalizeDuration(value) {
+  const parsed = Number(value);
+  const safe = Number.isFinite(parsed) ? parsed : 5;
+  return clamp(Math.round(safe / DURATION_STEP) * DURATION_STEP, DURATION_MIN, DURATION_MAX);
+}
+
+function hasV4Timeline(rawValue) {
+  const raw = parseObject(rawValue);
+  const timeline = parseObject(raw.timeline_experimental);
+  return Number(timeline.version) >= 4;
+}
+
+function bestMultiKeyRaw(controller, node, preferred = null) {
+  const widgetRaw = controller?.stateWidget?.value;
+  const savedRaw = node?.properties?.h3scMultiKeyState?.layout_json;
+  for (const candidate of [preferred, widgetRaw, savedRaw]) {
+    if (candidate != null && hasV4Timeline(candidate)) return candidate;
+  }
+  return preferred ?? widgetRaw ?? savedRaw;
+}
+''',
+    "multikey v4 raw selection helpers",
+)
+
+multi = replace_once(
+    multi,
+    '''  if (widget) {
+    widget.value = raw;
+    widget.serialize = true;
+    widget.options = widget.options || {};
+    widget.options.serialize = true;
+    widget.callback?.(raw, app?.canvas, controller.node, [0, 0], null);
+  }
+  controller.node?.setDirtyCanvas?.(true, true);''',
+    '''  if (widget) {
+    widget.value = raw;
+    widget.serialize = true;
+    widget.options = widget.options || {};
+    widget.options.serialize = true;
+    widget.callback?.(raw, app?.canvas, controller.node, [0, 0], null);
+  }
+  const node = controller.node;
+  if (node) {
+    node.properties = node.properties || {};
+    node.properties.h3scMultiKeyState = { version: 4, layout_json: raw };
+    const widgetIndex = node.widgets?.indexOf(widget) ?? -1;
+    if (Array.isArray(node.widgets_values) && widgetIndex >= 0) node.widgets_values[widgetIndex] = raw;
+  }
+  controller.node?.setDirtyCanvas?.(true, true);''',
+    "multikey native persistence snapshot",
+)
+
+multi = replace_once(
+    multi,
+    '''function syncMarkerSelection(controller) {
+  const exp = controller.__h3scTimelineExp;
+  const ui = controller.__h3scMultiUI;
+  if (!exp || !ui?.layer) return;
+  const activeSlot = controller.activeSlot;
+  for (const marker of ui.layer.querySelectorAll(".h3sc-mk-marker.key")) {
+    const time = Number(marker.dataset.time);
+    const selected = marker.dataset.slot === activeSlot && Number.isFinite(time) && Math.abs(time - exp.t) <= EPS;
+    marker.classList.toggle("active", selected);
+  }
+}
+''',
+    '''function syncMarkerSelection(controller) {
+  const exp = controller.__h3scTimelineExp;
+  const ui = controller.__h3scMultiUI;
+  if (!exp || !ui?.layer) return;
+  const activeSlot = controller.activeSlot;
+  for (const marker of ui.layer.querySelectorAll(".h3sc-mk-marker.key")) {
+    const time = Number(marker.dataset.time);
+    const selected = marker.dataset.slot === activeSlot && Number.isFinite(time) && Math.abs(time - exp.t) <= EPS;
+    marker.classList.toggle("active", selected);
+  }
+}
+
+function expectedMarkerSignature(controller) {
+  const exp = controller.__h3scTimelineExp;
+  if (!exp) return "";
+  const parts = [];
+  for (const slot of VISIBLE_SLOTS) {
+    const keys = (exp.tracks?.[slot]?.keys ?? []).slice().sort((a, b) => a.time - b.time);
+    keys.forEach((key, index) => parts.push(`${slot}:${index}:${Number(key.time).toFixed(6)}`));
+  }
+  return parts.join("|");
+}
+
+function renderedMarkerSignature(ui) {
+  if (!ui?.layer) return "";
+  return [...ui.layer.querySelectorAll(".h3sc-mk-marker.key")]
+    .map((marker) => `${marker.dataset.slot}:${marker.dataset.index}:${Number(marker.dataset.time).toFixed(6)}`)
+    .join("|");
+}
+''',
+    "multikey marker signatures",
+)
+
+multi = replace_once(
+    multi,
+    '''  controller.render = () => {
+    previousRender();
+    upgradeState(controller, controller.stateWidget?.value);
+    controller.__h3scMultiUI = buildUI(controller);
+    bindCanvas(controller);
+    refreshAll(controller, true);
+  };
+
+  controller.updateControls = () => {
+    previousUpdate();
+    updateUI(controller, false);
+  };''',
+    '''  controller.render = () => {
+    previousRender();
+    upgradeState(controller, bestMultiKeyRaw(controller, node));
+    controller.__h3scMultiUI = buildUI(controller);
+    bindCanvas(controller);
+    refreshAll(controller, true);
+  };
+
+  controller.updateControls = () => {
+    previousUpdate();
+    const ui = controller.__h3scMultiUI;
+    const liveUI = Boolean(ui?.section?.isConnected && ui?.layer?.isConnected && controller.root?.contains(ui.section));
+    if (!liveUI) {
+      controller.__h3scMultiUI = buildUI(controller);
+      bindCanvas(controller);
+      updateUI(controller, true);
+      return;
+    }
+    updateUI(controller, expectedMarkerSignature(controller) !== renderedMarkerSignature(ui));
+  };''',
+    "multikey render and update self heal",
+)
+
+multi = replace_once(
+    multi,
+    '''  if (previousReload) {
+    controller.reloadFromWidgets = () => {
+      previousReload();
+      upgradeState(controller, controller.stateWidget?.value);
+      controller.__h3scMultiUI = buildUI(controller);
+      bindCanvas(controller);
+      refreshAll(controller, true);
+    };
+  }''',
+    '''  if (previousReload) {
+    controller.reloadFromWidgets = () => {
+      const raw = bestMultiKeyRaw(controller, node);
+      previousReload();
+      upgradeState(controller, raw);
+      controller.__h3scMultiUI = buildUI(controller);
+      bindCanvas(controller);
+      saveState(controller);
+    };
+  }''',
+    "multikey reload restore",
+)
+
+multi = replace_once(
+    multi,
+    '''function patchWhenReady(node, raw, attempts = 64) {
+  if (install(node, raw) || attempts <= 0) return;
+  queueMicrotask(() => patchWhenReady(node, raw, attempts - 1));
+}''',
+    '''function repairMultiKeyUI(controller) {
+  if (!controller?.root || !controller.__h3scTimelineExp) return;
+  const ui = controller.__h3scMultiUI;
+  const liveUI = Boolean(ui?.section?.isConnected && ui?.layer?.isConnected && controller.root.contains(ui.section));
+  if (!liveUI) {
+    controller.__h3scMultiUI = buildUI(controller);
+    bindCanvas(controller);
+    refreshAll(controller, true);
+    return;
+  }
+  if (expectedMarkerSignature(controller) !== renderedMarkerSignature(ui)) renderMarkers(controller);
+  else syncMarkerSelection(controller);
+}
+
+function restoreInstalled(node, raw = null) {
+  const controller = node?.__h3scController;
+  if (!controller || !node.__h3scMultiKeyInstalled) return false;
+  const source = bestMultiKeyRaw(controller, node, raw);
+  if (source != null) upgradeState(controller, source);
+  repairMultiKeyUI(controller);
+  saveState(controller);
+  return true;
+}
+
+function repairVisibleMultiKeyNodes() {
+  for (const node of app?.graph?._nodes ?? []) {
+    if (!node?.__h3scMultiKeyInstalled) continue;
+    const controller = node.__h3scController;
+    if (!controller?.root?.isConnected) continue;
+    repairMultiKeyUI(controller);
+  }
+}
+
+function installLifecycleRepairHooks() {
+  if (window.__h3scMultiKeyLifecycleRepair) return;
+  window.__h3scMultiKeyLifecycleRepair = true;
+  const repair = () => requestAnimationFrame(() => repairVisibleMultiKeyNodes());
+  window.addEventListener("focus", repair, true);
+  window.addEventListener("pageshow", repair, true);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) repair();
+  }, true);
+}
+
+function patchWhenReady(node, raw, attempts = 64) {
+  if (node?.__h3scMultiKeyInstalled) return restoreInstalled(node, raw);
+  if (install(node, raw) || attempts <= 0) return;
+  queueMicrotask(() => patchWhenReady(node, raw, attempts - 1));
+}''',
+    "multikey installed-state restore",
+)
+
+multi = replace_once(
+    multi,
+    '''  app.registerExtension({
+    name: EXTENSION_NAME,
+    beforeRegisterNodeDef(nodeType, nodeData) {''',
+    '''  app.registerExtension({
+    name: EXTENSION_NAME,
+    setup() {
+      installLifecycleRepairHooks();
+    },
+    beforeRegisterNodeDef(nodeType, nodeData) {''',
+    "multikey lifecycle setup",
+)
+
+multi_path.write_text(multi, encoding="utf-8", newline="\n")
+
+
+test_path = Path("tests/test_multikey_timeline.py")
+tests = test_path.read_text(encoding="utf-8")
+tests = replace_once(
+    tests,
+    'MULTIKEY_JS = ROOT / "web" / "zzzzzzz_h3sc_multikey_timeline.js"\n',
+    'MULTIKEY_JS = ROOT / "web" / "zzzzzzz_h3sc_multikey_timeline.js"\nLEGACY_TIMELINE_JS = ROOT / "web" / "zzzzz_h3sc_timeline_experimental.js"\n',
+    "legacy test source constant",
+)
+anchor = '''    def test_key_marker_drag_prevents_stale_click_and_respects_neighbors(self):
+        source = MULTIKEY_JS.read_text(encoding="utf-8")
+        self.assertIn("const marker = event.currentTarget", source)
+        self.assertIn("const rect = ui.layer.getBoundingClientRect()", source)
+        self.assertIn("if (Math.abs(pendingX - startX) >= 2) moved = true", source)
+        self.assertIn("marker.style.left = `${ref.time * 100}%`", source)
+        self.assertIn("const lo = pos > 0 ? ordered[pos - 1].time + gap : gap", source)
+        self.assertIn("const hi = pos < ordered.length - 1 ? ordered[pos + 1].time - gap : 1 - gap", source)
+'''
+addition = anchor + '''
+    def test_multikey_survives_reload_reconfigure_and_tab_visibility_cycles(self):
+        source = MULTIKEY_JS.read_text(encoding="utf-8")
+        legacy = LEGACY_TIMELINE_JS.read_text(encoding="utf-8")
+        for required in (
+            'function bestMultiKeyRaw(controller, node, preferred = null)',
+            'node.properties.h3scMultiKeyState = { version: 4, layout_json: raw }',
+            'const raw = bestMultiKeyRaw(controller, node);',
+            'previousReload();\\n      upgradeState(controller, raw);',
+            'if (node?.__h3scMultiKeyInstalled) return restoreInstalled(node, raw);',
+            'function expectedMarkerSignature(controller)',
+            'function renderedMarkerSignature(ui)',
+            'document.addEventListener("visibilitychange"',
+            'window.addEventListener("focus", repair, true)',
+        ):
+            self.assertIn(required, source)
+        self.assertIn('const preserveMultiKey = Number(currentTimeline.version) >= 4;', legacy)
+        self.assertIn('...clone(currentTimeline)', legacy)
+        self.assertIn('timeline_experimental: timelineExperimental', legacy)
+'''
+tests = replace_once(tests, anchor, addition, "multikey lifecycle regression test")
+test_path.write_text(tests, encoding="utf-8", newline="\n")
+
+
+manifest = Path("PACKAGE_MANIFEST.sha256")
+lines = manifest.read_text(encoding="utf-8").splitlines()
+targets = {
+    "web/zzzzz_h3sc_timeline_experimental.js",
+    "web/zzzzzzz_h3sc_multikey_timeline.js",
+    "tests/test_multikey_timeline.py",
+}
+output = []
+seen = set()
+for line in lines:
+    digest, relative = line.split("  ", 1)
+    if relative in targets:
+        data = Path(relative).read_bytes().replace(b"\r\n", b"\n")
+        digest = hashlib.sha256(data).hexdigest()
+        seen.add(relative)
+    output.append(f"{digest}  {relative}")
+missing = targets - seen
+if missing:
+    raise SystemExit(f"manifest targets missing: {sorted(missing)}")
+manifest.write_text("\n".join(output) + "\n", encoding="utf-8", newline="\n")
