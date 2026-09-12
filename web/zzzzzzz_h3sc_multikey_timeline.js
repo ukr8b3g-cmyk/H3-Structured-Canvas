@@ -60,7 +60,10 @@ function interpolateBox(a, b, t, slot) {
   if (!a && !b) return null;
   if (!a) return cloneBox(b);
   if (!b) return cloneBox(a);
-  return normalizeBox({ bbox_2d: a.bbox_2d.map((value, index) => value + (b.bbox_2d[index] - value) * t) }, slot);
+  return normalizeBox(
+    { bbox_2d: a.bbox_2d.map((value, index) => value + (b.bbox_2d[index] - value) * t) },
+    slot,
+  );
 }
 
 function orderedPoints(track) {
@@ -103,6 +106,14 @@ function pointAt(track, t) {
 
 function trackEmpty(track) {
   return !track?.start && !track?.end && !(track?.keys?.length);
+}
+
+function atEndpoint(t) {
+  return Number(t) <= EPS || Number(t) >= 1 - EPS;
+}
+
+function canEditTrack(track, t) {
+  return Boolean(pointAt(track, t)) || (trackEmpty(track) && atEndpoint(t));
 }
 
 function syncLegacyMid(track) {
@@ -156,7 +167,10 @@ function serializeLayout(controller) {
     if (track?.end) ends.push(cloneBox(track.end));
     const keys = (track?.keys ?? []).slice().sort((a, b) => a.time - b.time).slice(0, MAX_INTERMEDIATE_KEYS);
     if (keys.length) {
-      keyframes[slot] = keys.map((key) => ({ time: Number(key.time.toFixed(6)), bbox_2d: [...key.bbox.bbox_2d] }));
+      keyframes[slot] = keys.map((key) => ({
+        time: Number(key.time.toFixed(6)),
+        bbox_2d: [...key.bbox.bbox_2d],
+      }));
     }
     const mid = keys.find((key) => Math.abs(key.time - 0.5) <= EPS);
     if (mid) mids.push(cloneBox(mid.bbox));
@@ -192,7 +206,9 @@ function refreshPreviewState(controller) {
   const exp = controller.__h3scTimelineExp;
   if (!exp) return;
   controller.state.canvas.show_boxes = true;
-  controller.state.boxes = VISIBLE_SLOTS.map((slot) => previewBox(exp.tracks[slot], exp.t, slot)).filter(Boolean);
+  controller.state.boxes = VISIBLE_SLOTS
+    .map((slot) => previewBox(exp.tracks[slot], exp.t, slot))
+    .filter(Boolean);
 }
 
 function drawPreview(controller) {
@@ -338,7 +354,24 @@ function ensureStyles() {
   const style = document.createElement("style");
   style.id = "h3sc-multikey-styles";
   style.textContent = `
-.h3sc-mk{background:#111314;border:1px solid #343738;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:7px}.h3sc-mk-head,.h3sc-mk-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.h3sc-mk-title{font-size:10.5px;font-weight:800;color:#48d5cf}.h3sc-mk-badge{font-size:9.5px;padding:2px 6px;border:1px solid #765e28;border-radius:999px;color:#e4b548;background:#211d13}.h3sc-mk-state{margin-left:auto;font-size:10px;color:#9ba1a2}.h3sc-mk-time{font:800 16px/1 ui-monospace,Consolas,monospace;min-width:65px;text-align:right}.h3sc-mk-current,.h3sc-mk-num{height:28px;background:#101213;color:#eee;border:1px solid #4b4f50;border-radius:5px;padding:3px 6px;text-align:right}.h3sc-mk-current{width:64px}.h3sc-mk-num{width:68px}.h3sc-mk-range-wrap{position:relative;flex:1;min-width:150px}.h3sc-mk-range{width:100%;accent-color:#48d5cf}.h3sc-mk-layer{position:absolute;left:8px;right:8px;top:50%;height:0;pointer-events:none}.h3sc-mk-marker{position:absolute;transform:translate(-50%,-50%) rotate(45deg);width:10px;height:10px;padding:0;border:1px solid #111;background:#48d5cf;pointer-events:auto;cursor:ew-resize}.h3sc-mk-marker.end{width:8px;height:8px;background:#ddd;cursor:pointer}.h3sc-mk-marker.active{outline:2px solid white;outline-offset:2px}.h3sc-mk-note{font-size:10px;color:#8f9697}.h3sc-mk-note.warn{color:#e4b548}.h3sc-mk-count{margin-left:auto;font:10px/1 ui-monospace,Consolas,monospace;color:#8f9697}`;
+.h3sc-mk{background:#111314;border:1px solid #343738;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:7px}
+.h3sc-mk-head,.h3sc-mk-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.h3sc-mk-title{font-size:10.5px;font-weight:800;color:#48d5cf}
+.h3sc-mk-badge{font-size:9.5px;padding:2px 6px;border:1px solid #765e28;border-radius:999px;color:#e4b548;background:#211d13}
+.h3sc-mk-state{margin-left:auto;font-size:10px;color:#9ba1a2}
+.h3sc-mk-time{font:800 16px/1 ui-monospace,Consolas,monospace;min-width:65px;text-align:right}
+.h3sc-mk-current,.h3sc-mk-num{height:28px;background:#101213;color:#eee;border:1px solid #4b4f50;border-radius:5px;padding:3px 6px;text-align:right}
+.h3sc-mk-current{width:64px}.h3sc-mk-num{width:68px}
+.h3sc-mk-range-wrap{position:relative;flex:1;min-width:150px}
+.h3sc-mk-range{width:100%;accent-color:#48d5cf}
+.h3sc-mk-layer{position:absolute;left:8px;right:8px;top:50%;height:0;pointer-events:none}
+.h3sc-mk-marker{position:absolute;transform:translate(-50%,-50%) rotate(45deg);width:10px;height:10px;padding:0;border:1px solid #111;background:#48d5cf;pointer-events:auto;cursor:ew-resize}
+.h3sc-mk-marker.end{width:8px;height:8px;background:#ddd;cursor:pointer}
+.h3sc-mk-marker.active{outline:2px solid white;outline-offset:2px}
+.h3sc-mk-note{font-size:10px;color:#8f9697}
+.h3sc-mk-note.warn{color:#e4b548}
+.h3sc-mk-count{margin-left:auto;font:10px/1 ui-monospace,Consolas,monospace;color:#8f9697}
+`;
   document.head.append(style);
 }
 
@@ -521,6 +554,8 @@ function updateUI(controller, markers = true) {
   const point = pointAt(track, exp.t);
   const seconds = exp.t * exp.duration;
   const count = track?.keys?.length ?? 0;
+  const canCreate = trackEmpty(track) && atEndpoint(exp.t);
+  const editable = Boolean(point) || canCreate;
 
   ui.time.textContent = `${seconds.toFixed(2)}s`;
   if (document.activeElement !== ui.current) {
@@ -534,8 +569,9 @@ function updateUI(controller, markers = true) {
   ui.del.disabled = point?.kind !== "key";
   ui.add.disabled = !track || trackEmpty(track) || Boolean(point) || exp.t <= EPS || exp.t >= 1 - EPS || count >= MAX_INTERMEDIATE_KEYS;
 
-  if (controller.drawButton) controller.drawButton.disabled = !point && !trackEmpty(track);
-  controller.canvas?.classList.toggle("h3sc-timeline-preview-only", !point);
+  if (controller.drawButton) controller.drawButton.disabled = !editable;
+  controller.canvas?.classList.remove("h3sc-timeline-preview-only");
+  if (controller.canvas) controller.canvas.style.cursor = editable && controller.drawMode ? "crosshair" : "default";
   const danger = controller.root?.querySelector(".h3sc-toolbar .h3sc-btn.danger");
   if (danger) danger.disabled = !point;
 
@@ -550,6 +586,10 @@ function updateUI(controller, markers = true) {
   } else if (point?.kind === "key") {
     ui.state.textContent = `KEY ${point.index + 1} · EDIT`;
     ui.note.textContent = `Intermediate key at ${seconds.toFixed(2)}s is editable.`;
+    ui.note.classList.remove("warn");
+  } else if (canCreate) {
+    ui.state.textContent = exp.t <= EPS ? "START · DRAW" : "END · DRAW";
+    ui.note.textContent = `Slot ${SLOT_LABELS[slot] ?? slot.toUpperCase()} is empty. Draw a new box here.`;
     ui.note.classList.remove("warn");
   } else {
     ui.state.textContent = "PREVIEW ONLY";
@@ -567,7 +607,14 @@ function refreshAll(controller, markers = true) {
 }
 
 function hitTest(controller, point) {
-  const boxes = [...(controller.state?.boxes ?? [])].reverse();
+  const activeSlot = controller.activeSlot;
+  const boxes = [...(controller.state?.boxes ?? [])].filter((box) => VISIBLE_SLOTS.includes(box?.slot));
+  boxes.sort((a, b) => {
+    if (a.slot === activeSlot && b.slot !== activeSlot) return -1;
+    if (b.slot === activeSlot && a.slot !== activeSlot) return 1;
+    return 0;
+  });
+
   const tx = 12 / Math.max(point.rect.width, 1) * VIEW_SPAN;
   const ty = 12 / Math.max(point.rect.height, 1) * VIEW_SPAN;
   for (const box of boxes) {
@@ -605,31 +652,52 @@ function bindCanvas(controller) {
   const begin = (event) => {
     if (event.button !== 0) return;
     const point = eventPoint(canvas, event);
-    const hit = hitTest(controller, point);
+    const activeSlot = controller.activeSlot;
+    const activeTrack = exp.tracks?.[activeSlot];
+    const activeCanCreate = controller.drawMode && trackEmpty(activeTrack) && atEndpoint(exp.t);
 
-    if (hit) {
-      const slot = hit.box.slot;
-      if (!pointAt(exp.tracks[slot], exp.t)) {
-        updateUI(controller, false);
-        return;
-      }
-      controller.activeSlot = slot;
-      controller.state.canvas.active_slot = slot;
-      exp.selectedSlot = slot;
-      drag = { pointerId: event.pointerId, slot, mode: hit.mode, handle: hit.handle, start: point, original: [...hit.box.bbox_2d], creating: false, pending: null, raf: 0 };
-    } else if (controller.drawMode) {
-      const slot = controller.activeSlot;
-      const track = exp.tracks[slot];
-      const creating = trackEmpty(track);
-      if (!pointAt(track, exp.t) && !(creating && (exp.t <= EPS || exp.t >= 1 - EPS))) {
-        updateUI(controller, false);
-        return;
-      }
-      exp.selectedSlot = slot;
-      drag = { pointerId: event.pointerId, slot, mode: "draw", handle: null, start: point, original: null, creating, pending: null, raf: 0 };
+    let slot = activeSlot;
+    let mode = null;
+    let handle = null;
+    let original = null;
+    let creating = false;
+
+    if (activeCanCreate) {
+      mode = "draw";
+      creating = true;
     } else {
-      return;
+      const hit = hitTest(controller, point);
+      if (hit) {
+        slot = hit.box.slot;
+        if (!pointAt(exp.tracks[slot], exp.t)) {
+          updateUI(controller, false);
+          return;
+        }
+        mode = hit.mode;
+        handle = hit.handle;
+        original = [...hit.box.bbox_2d];
+      } else if (controller.drawMode && canEditTrack(activeTrack, exp.t)) {
+        mode = "draw";
+        creating = trackEmpty(activeTrack);
+      } else {
+        return;
+      }
     }
+
+    controller.activeSlot = slot;
+    controller.state.canvas.active_slot = slot;
+    exp.selectedSlot = slot;
+    drag = {
+      pointerId: event.pointerId,
+      slot,
+      mode,
+      handle,
+      start: point,
+      original,
+      creating,
+      pending: null,
+      raf: 0,
+    };
 
     event.preventDefault();
     event.stopPropagation();
@@ -681,7 +749,9 @@ function bindCanvas(controller) {
     if (drag.raf) cancelAnimationFrame(drag.raf);
     const box = computeBox(eventPoint(canvas, event));
     const minSize = drag.mode === "draw" ? 12 : 1;
-    if (box && box[2] - box[0] >= minSize && box[3] - box[1] >= minSize) assignBox(controller, drag.slot, box, drag.creating);
+    if (box && box[2] - box[0] >= minSize && box[3] - box[1] >= minSize) {
+      assignBox(controller, drag.slot, box, drag.creating);
+    }
 
     const pointerId = drag.pointerId;
     drag = null;
@@ -728,7 +798,9 @@ function install(node, configuredRaw = null) {
   const previousDestroy = controller.destroy?.bind(controller);
 
   controller.sync = () => saveState(controller);
-  controller.upsertBox = (slot, bbox) => { if (assignBox(controller, slot, bbox, false)) saveState(controller); };
+  controller.upsertBox = (slot, bbox) => {
+    if (assignBox(controller, slot, bbox, false)) saveState(controller);
+  };
   controller.removeBox = (slot) => {
     const track = controller.__h3scTimelineExp?.tracks?.[slot];
     if (!track) return;
