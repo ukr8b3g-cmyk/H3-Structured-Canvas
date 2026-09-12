@@ -1,0 +1,80 @@
+name: apply-key-marker-patch
+
+on:
+  push:
+    branches: [experimental/multi-key-timeline-v1]
+    paths: [.github/workflows/apply-key-marker-patch.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: experimental/multi-key-timeline-v1
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply focused patch
+        shell: bash
+        run: |
+          git apply --check .github/key-marker-polish.patch
+          git apply .github/key-marker-polish.patch
+      - name: Validate key marker behavior
+        shell: bash
+        env:
+          PYTHONPATH: tests
+        run: |
+          node --check web/zzzzzzz_h3sc_multikey_timeline.js
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('web/zzzzzzz_h3sc_multikey_timeline.js').read_text(encoding='utf-8')
+          required = (
+              'const SLOT_COLORS = { a: "#ef4444", b: "#3b82f6", c: "#facc15" }',
+              'marker.className = `h3sc-mk-marker key slot-${slot}`',
+              'marker.style.background = SLOT_COLORS[slot]',
+              'marker.textContent = `${SLOT_LABELS[slot]}${index + 1}`',
+              'ui.layer.querySelectorAll(".h3sc-mk-marker.key")',
+              'selectKey(controller, slot, ref.time)',
+              'controller.updateControls?.()',
+              'accent-color:#a7afb1',
+              'ui.state.textContent = `${SLOT_LABELS[slot]} KEY ${point.index + 1} · EDIT`',
+          )
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit('missing key marker contracts: ' + repr(missing))
+          PY
+          python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Refresh manifest
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          target = 'web/zzzzzzz_h3sc_multikey_timeline.js'
+          manifest = Path('PACKAGE_MANIFEST.sha256')
+          output = []
+          for line in manifest.read_text(encoding='utf-8').splitlines():
+              digest, relative = line.split('  ', 1)
+              if relative == target:
+                  data = Path(target).read_bytes().replace(b'\r\n', b'\n')
+                  digest = hashlib.sha256(data).hexdigest()
+              output.append(f'{digest}  {relative}')
+          manifest.write_text('\n'.join(output) + '\n', encoding='utf-8', newline='\n')
+          PY
+          python tools/verify_manifest.py
+      - name: Commit polished marker implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/zzzzzzz_h3sc_multikey_timeline.js PACKAGE_MANIFEST.sha256
+          git commit -m "feat(experimental): make multikey markers persistent and slot-colored"
+          git push origin HEAD:experimental/multi-key-timeline-v1
