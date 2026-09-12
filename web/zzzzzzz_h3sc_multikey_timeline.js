@@ -116,6 +116,13 @@ function canEditTrack(track, t) {
   return Boolean(pointAt(track, t)) || (trackEmpty(track) && atEndpoint(t));
 }
 
+function keyTimes(track) {
+  return (track?.keys ?? [])
+    .map((key) => Number(key?.time))
+    .filter((time) => Number.isFinite(time) && time > EPS && time < 1 - EPS)
+    .sort((a, b) => a - b);
+}
+
 function syncLegacyMid(track) {
   if (!track) return;
   const mid = (track.keys ?? []).find((key) => Math.abs(Number(key.time) - 0.5) <= EPS);
@@ -293,33 +300,36 @@ function addKey(controller) {
   if ([0, ...track.keys.map((key) => key.time), 1].some((time) => Math.abs(time - exp.t) < gap)) return;
   const bbox = previewBox(track, exp.t, slot);
   if (!bbox) return;
-  track.keys.push({ time: exp.t, bbox });
+  const key = { time: exp.t, bbox };
+  track.keys.push(key);
   track.keys.sort((a, b) => a.time - b.time);
+  exp.t = key.time;
+  exp.selectedSlot = slot;
   syncLegacyMid(track);
   saveState(controller);
 }
 
 function deleteKey(controller) {
   const exp = controller.__h3scTimelineExp;
-  const track = exp?.tracks?.[controller.activeSlot];
+  const slot = controller.activeSlot;
+  const track = exp?.tracks?.[slot];
   const point = pointAt(track, exp?.t);
   if (point?.kind !== "key") return;
   track.keys.splice(point.index, 1);
   syncLegacyMid(track);
-  exp.selectedSlot = null;
+  exp.selectedSlot = slot;
   saveState(controller);
 }
 
 function jumpKey(controller, direction) {
   const exp = controller.__h3scTimelineExp;
   const track = exp?.tracks?.[controller.activeSlot];
-  if (!track) return;
-  const times = orderedPoints(track).map((point) => point.time);
+  const times = keyTimes(track);
   if (!times.length) return;
   const target = direction < 0
-    ? [...times].reverse().find((time) => time < exp.t - EPS)
-    : times.find((time) => time > exp.t + EPS);
-  setPlayhead(controller, target ?? (direction < 0 ? times[0] : times.at(-1)));
+    ? [...times].reverse().find((time) => time < exp.t - EPS) ?? times[0]
+    : times.find((time) => time > exp.t + EPS) ?? times.at(-1);
+  setPlayhead(controller, target);
 }
 
 function stopPlayback(controller) {
@@ -471,7 +481,7 @@ function buildUI(controller) {
   note.className = "h3sc-mk-note";
   section.append(head, row, keys, note);
   monitor.after(section);
-  return { section, play, time, current, range, layer, duration, add, del, count, state, note, wrap };
+  return { section, play, time, current, range, layer, duration, add, del, prev, next, count, state, note, wrap };
 }
 
 function renderMarkers(controller) {
@@ -488,12 +498,15 @@ function renderMarkers(controller) {
     marker.style.left = `${point.time * 100}%`;
     if (Math.abs(point.time - exp.t) <= EPS) marker.classList.add("active");
     marker.title = `${point.kind.toUpperCase()} ${(point.time * exp.duration).toFixed(2)}s`;
-    marker.onclick = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      setPlayhead(controller, point.time);
-    };
-    if (point.kind === "key") marker.onpointerdown = (event) => startMarkerDrag(controller, slot, point.index, event);
+    if (point.kind === "key") {
+      marker.onpointerdown = (event) => startMarkerDrag(controller, slot, point.index, event);
+    } else {
+      marker.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setPlayhead(controller, point.time);
+      };
+    }
     ui.layer.append(marker);
   }
 }
@@ -506,11 +519,14 @@ function startMarkerDrag(controller, slot, index, event) {
   const exp = controller.__h3scTimelineExp;
   const ui = controller.__h3scMultiUI;
   const ref = exp?.tracks?.[slot]?.keys?.[index];
+  const marker = event.currentTarget;
   if (!ref || !ui?.wrap) return;
 
-  const rect = ui.wrap.getBoundingClientRect();
+  const rect = (ui.layer ?? ui.wrap).getBoundingClientRect();
+  const startX = event.clientX;
   let raf = 0;
-  let pendingX = event.clientX;
+  let pendingX = startX;
+  let moved = false;
 
   const apply = () => {
     raf = 0;
@@ -525,21 +541,28 @@ function startMarkerDrag(controller, slot, index, event) {
     live.keys.sort((a, b) => a.time - b.time);
     syncLegacyMid(live);
     exp.t = ref.time;
+    exp.selectedSlot = slot;
+    if (marker?.style) marker.style.left = `${ref.time * 100}%`;
     drawPreview(controller);
     updateUI(controller, false);
   };
 
   const move = (moveEvent) => {
     pendingX = moveEvent.clientX;
-    if (!raf) raf = requestAnimationFrame(apply);
+    if (Math.abs(pendingX - startX) >= 2) moved = true;
+    if (moved && !raf) raf = requestAnimationFrame(apply);
   };
 
   const up = () => {
     window.removeEventListener("pointermove", move, true);
     window.removeEventListener("pointerup", up, true);
     if (raf) cancelAnimationFrame(raf);
-    apply();
-    saveState(controller);
+    if (moved) {
+      apply();
+      saveState(controller);
+    } else {
+      setPlayhead(controller, ref.time);
+    }
   };
 
   window.addEventListener("pointermove", move, true);
@@ -570,6 +593,8 @@ function updateUI(controller, markers = true) {
   ui.count.textContent = `${SLOT_LABELS[slot] ?? "?"}: ${count}/${MAX_INTERMEDIATE_KEYS} keys`;
   ui.del.disabled = point?.kind !== "key";
   ui.add.disabled = !track || trackEmpty(track) || Boolean(point) || exp.t <= EPS || exp.t >= 1 - EPS || count >= MAX_INTERMEDIATE_KEYS;
+  ui.prev.disabled = count === 0;
+  ui.next.disabled = count === 0;
 
   if (controller.drawButton) controller.drawButton.disabled = !editable;
   controller.canvas?.classList.remove("h3sc-timeline-preview-only");
@@ -840,11 +865,16 @@ function install(node, configuredRaw = null) {
     if (event.key !== "Delete" && event.key !== "Backspace") return;
     if (target instanceof Element && target.closest("input,textarea,select,[contenteditable='true']")) return;
     const exp = controller.__h3scTimelineExp;
-    const slot = exp?.selectedSlot;
-    if (!slot || !pointAt(exp.tracks[slot], exp.t)) return;
+    const slot = controller.activeSlot;
+    const point = pointAt(exp?.tracks?.[slot], exp?.t);
+    if (!point) return;
     event.preventDefault();
     event.stopPropagation();
-    controller.removeBox(slot);
+    if (point.kind === "key") {
+      deleteKey(controller);
+    } else {
+      controller.removeBox(slot);
+    }
   };
 
   window.addEventListener("keydown", keyHandler, true);
