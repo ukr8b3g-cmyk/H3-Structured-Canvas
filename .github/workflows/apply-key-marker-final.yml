@@ -1,0 +1,62 @@
+name: apply-key-marker-final
+
+on:
+  push:
+    branches:
+      - experimental/multi-key-timeline-v1
+    paths:
+      - .github/workflows/apply-key-marker-final.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: experimental/multi-key-timeline-v1
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply marker patch
+        shell: bash
+        run: |
+          git apply --check .github/key-marker-polish.patch
+          git apply .github/key-marker-polish.patch
+      - name: Update stale frontend assertions
+        shell: bash
+        run: |
+          python -c "from pathlib import Path; p=Path('tests/test_multikey_timeline.py'); s=p.read_text(encoding='utf-8'); s=s.replace('self.assertIn(\"setPlayhead(controller, ref.time)\", source)', 'self.assertIn(\"selectKey(controller, slot, ref.time)\", source)', 1); s=s.replace('self.assertIn(\"const rect = (ui.layer ?? ui.wrap).getBoundingClientRect()\", source)', 'self.assertIn(\"const rect = ui.layer.getBoundingClientRect()\", source)', 1); p.write_text(s, encoding='utf-8', newline='\\n')"
+      - name: Validate product and tests
+        shell: bash
+        env:
+          PYTHONPATH: tests
+        run: |
+          node --check web/zzzzzzz_h3sc_multikey_timeline.js
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          grep -F 'const SLOT_COLORS = { a: "#ef4444", b: "#3b82f6", c: "#facc15" }' web/zzzzzzz_h3sc_multikey_timeline.js
+          grep -F 'marker.textContent = `${SLOT_LABELS[slot]}${index + 1}`' web/zzzzzzz_h3sc_multikey_timeline.js
+          grep -F 'ui.layer.querySelectorAll(".h3sc-mk-marker.key")' web/zzzzzzz_h3sc_multikey_timeline.js
+          grep -F 'selectKey(controller, slot, ref.time)' web/zzzzzzz_h3sc_multikey_timeline.js
+      - name: Refresh manifest
+        shell: bash
+        run: |
+          CORE_SHA=$(sha256sum web/zzzzzzz_h3sc_multikey_timeline.js | awk '{print $1}')
+          TEST_SHA=$(sha256sum tests/test_multikey_timeline.py | awk '{print $1}')
+          sed -i -E "s|^[0-9a-f]{64}  web/zzzzzzz_h3sc_multikey_timeline.js$|${CORE_SHA}  web/zzzzzzz_h3sc_multikey_timeline.js|" PACKAGE_MANIFEST.sha256
+          sed -i -E "s|^[0-9a-f]{64}  tests/test_multikey_timeline.py$|${TEST_SHA}  tests/test_multikey_timeline.py|" PACKAGE_MANIFEST.sha256
+          python tools/verify_manifest.py
+      - name: Commit marker implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/zzzzzzz_h3sc_multikey_timeline.js tests/test_multikey_timeline.py PACKAGE_MANIFEST.sha256
+          git commit -m "feat(experimental): make multikey markers persistent and slot-colored"
+          git push origin HEAD:experimental/multi-key-timeline-v1
