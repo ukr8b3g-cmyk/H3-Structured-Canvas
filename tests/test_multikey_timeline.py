@@ -98,6 +98,17 @@ class MultiKeyTimelineTests(unittest.TestCase):
         self.assertIn("canonical_time: \"normalized_0_1\"", source)
         self.assertIn("MIN_KEY_GAP_SECONDS / exp.duration", source)
 
+    def test_frontend_canvas_interaction_engine_avoids_known_regressions(self):
+        source = MULTIKEY_JS.read_text(encoding="utf-8")
+        self.assertNotIn("controller.activeSlot =", source)
+        self.assertNotIn("fitAndDraw", source)
+        self.assertNotIn('canvas.addEventListener("pointerdown"', source)
+        self.assertIn("canvas.onpointerdown = begin", source)
+        self.assertIn("canvas.onpointermove = move", source)
+        self.assertIn("requestAnimationFrame(flushLive)", source)
+        self.assertIn('controller.canvas?.classList.remove("h3sc-timeline-preview-only")', source)
+        self.assertIn("canEditTrack", source)
+
 
 if __name__ == "__main__":
     unittest.main()
