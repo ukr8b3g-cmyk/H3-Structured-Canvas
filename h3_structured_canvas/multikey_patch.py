@@ -163,6 +163,9 @@ def install_multikey_fixes(schema_module: Any, compiler_module: Any) -> None:
         for element_id, entry in entry_map.items():
             raw_slot = id_to_slot.get(element_id)
             keys = keys_by_slot.get(str(raw_slot), [])
+            if not keys and isinstance(element_id, str):
+                candidate = element_id.rsplit("_", 1)[-1]
+                keys = keys_by_slot.get(candidate, [])
             element = element_map.get(element_id)
             if not keys or element is None or "start_bbox" not in entry or "end_bbox" not in entry:
                 continue
