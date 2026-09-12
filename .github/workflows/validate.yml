@@ -2,7 +2,7 @@ name: validate
 
 on:
   push:
-    branches: [main, experimental/3-slot-timeline-v1]
+    branches: [main, experimental/3-slot-timeline-v1, experimental/multi-key-timeline-v1]
   pull_request:
 
 jobs:
@@ -37,6 +37,7 @@ jobs:
           node --check web/zzzz_h3sc_correctness_cleanup.js
           node --check web/zzzzz_h3sc_timeline_experimental.js
           node --check web/zzzzzz_h3sc_mp4_metadata.js
+          node --check web/zzzzzzz_h3sc_multikey_timeline.js
       - name: Package manifest
         shell: bash
         run: python tools/verify_manifest.py
