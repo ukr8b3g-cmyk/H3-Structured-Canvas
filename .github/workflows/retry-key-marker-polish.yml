@@ -1,0 +1,90 @@
+name: retry-key-marker-polish
+
+on:
+  push:
+    branches: [experimental/multi-key-timeline-v1]
+    paths: [.github/workflows/retry-key-marker-polish.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: experimental/multi-key-timeline-v1
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reuse validated patch and repair test indentation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+
+          workflow = Path('.github/workflows/apply-key-marker-polish.yml').read_text(encoding='utf-8').splitlines()
+          start = workflow.index("          python - <<'PY'") + 1
+          end = workflow.index('          PY', start)
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in workflow[start:end])
+          exec(compile(script, '<apply-key-marker-polish>', 'exec'), {})
+
+          test_path = Path('tests/test_multikey_timeline.py')
+          text = test_path.read_text(encoding='utf-8')
+          method_name = 'def test_key_markers_are_slot_colored_persistent_and_selectable(self):'
+          pos = text.index(method_name)
+          line_start = text.rfind('\n', 0, pos) + 1
+          block_end = text.index('\n\nif __name__ == "__main__":', pos)
+          method = '''    def test_key_markers_are_slot_colored_persistent_and_selectable(self):
+        source = MULTIKEY_JS.read_text(encoding="utf-8")
+        for required in (
+            'const SLOT_COLORS = { a: "#ef4444", b: "#3b82f6", c: "#facc15" }',
+            'for (const slot of VISIBLE_SLOTS)',
+            'marker.style.background = SLOT_COLORS[slot]',
+            'marker.textContent = `${SLOT_LABELS[slot]}${index + 1}`',
+            'ui.layer.querySelectorAll(".h3sc-mk-marker.key")',
+            'selectKey(controller, slot, ref.time)',
+            'accent-color:#a7afb1',
+            'ui.state.textContent = `${SLOT_LABELS[slot]} KEY ${point.index + 1} · EDIT`',
+        ):
+            self.assertIn(required, source)
+        self.assertIn('c: "#facc15"', source)
+        self.assertIn('marker.className = `h3sc-mk-marker key slot-${slot}`', source)
+'''
+          text = text[:line_start] + method + text[block_end:]
+          test_path.write_text(text, encoding='utf-8', newline='\n')
+
+          manifest = Path('PACKAGE_MANIFEST.sha256')
+          lines = manifest.read_text(encoding='utf-8').splitlines()
+          targets = {'web/zzzzzzz_h3sc_multikey_timeline.js', 'tests/test_multikey_timeline.py'}
+          output = []
+          for line in lines:
+              digest, relative = line.split('  ', 1)
+              if relative in targets:
+                  data = Path(relative).read_bytes().replace(b'\r\n', b'\n')
+                  digest = hashlib.sha256(data).hexdigest()
+              output.append(f'{digest}  {relative}')
+          manifest.write_text('\n'.join(output) + '\n', encoding='utf-8', newline='\n')
+          PY
+      - name: Validate patched tree
+        shell: bash
+        env:
+          PYTHONPATH: tests
+        run: |
+          node --check web/zzzzzzz_h3sc_multikey_timeline.js
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python tools/verify_manifest.py
+      - name: Commit polished markers
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/zzzzzzz_h3sc_multikey_timeline.js tests/test_multikey_timeline.py PACKAGE_MANIFEST.sha256
+          git commit -m "feat(experimental): polish multikey marker visibility and selection"
+          git push origin HEAD:experimental/multi-key-timeline-v1
