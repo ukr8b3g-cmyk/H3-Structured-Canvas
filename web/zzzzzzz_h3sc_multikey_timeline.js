@@ -49,7 +49,11 @@ function normalizeBox(raw, slot) {
   [x1, x2] = x1 <= x2 ? [x1, x2] : [x2, x1];
   [y1, y2] = y1 <= y2 ? [y1, y2] : [y2, y1];
   if (x2 - x1 < 1 || y2 - y1 < 1) return null;
-  return { slot, ui_color: { a: "red", b: "blue", c: "yellow" }[slot] ?? "red", bbox_2d: [x1, y1, x2, y2].map(Math.round) };
+  return {
+    slot,
+    ui_color: { a: "red", b: "blue", c: "yellow" }[slot] ?? "red",
+    bbox_2d: [x1, y1, x2, y2].map(Math.round),
+  };
 }
 
 function interpolateBox(a, b, t, slot) {
@@ -79,7 +83,8 @@ function previewBox(track, t, slot) {
     const left = points[index];
     const right = points[index + 1];
     if (t >= left.time - EPS && t <= right.time + EPS) {
-      return interpolateBox(left.bbox, right.bbox, clamp((t - left.time) / Math.max(right.time - left.time, 1e-9), 0, 1), slot);
+      const local = clamp((t - left.time) / Math.max(right.time - left.time, 1e-9), 0, 1);
+      return interpolateBox(left.bbox, right.bbox, local, slot);
     }
   }
   return cloneBox(points.at(-1).bbox);
@@ -108,9 +113,9 @@ function syncLegacyMid(track) {
 }
 
 function importKeys(track, rawTimeline, slot) {
-  const raw = rawTimeline?.keyframes?.[slot];
+  const rawKeys = Array.isArray(rawTimeline?.keyframes?.[slot]) ? rawTimeline.keyframes[slot] : [];
   const keys = [];
-  for (const item of Array.isArray(raw) ? raw : []) {
+  for (const item of rawKeys) {
     const time = Number(item?.time ?? item?.t);
     const bbox = normalizeBox(item, slot);
     if (Number.isFinite(time) && time > 0 && time < 1 && bbox) keys.push({ time, bbox });
@@ -150,7 +155,9 @@ function serializeLayout(controller) {
     if (track?.start) starts.push(cloneBox(track.start));
     if (track?.end) ends.push(cloneBox(track.end));
     const keys = (track?.keys ?? []).slice().sort((a, b) => a.time - b.time).slice(0, MAX_INTERMEDIATE_KEYS);
-    if (keys.length) keyframes[slot] = keys.map((key) => ({ time: Number(key.time.toFixed(6)), bbox_2d: [...key.bbox.bbox_2d] }));
+    if (keys.length) {
+      keyframes[slot] = keys.map((key) => ({ time: Number(key.time.toFixed(6)), bbox_2d: [...key.bbox.bbox_2d] }));
+    }
     const mid = keys.find((key) => Math.abs(key.time - 0.5) <= EPS);
     if (mid) mids.push(cloneBox(mid.bbox));
   }
@@ -181,41 +188,25 @@ function serializeLayout(controller) {
   };
 }
 
-function saveState(controller) {
-  const widget = controller.stateWidget;
-  const raw = JSON.stringify(serializeLayout(controller));
-  if (widget) {
-    widget.value = raw;
-    widget.serialize = true;
-    widget.options = widget.options || {};
-    widget.options.serialize = true;
-    widget.callback?.(raw, app?.canvas, controller.node, [0, 0], null);
-  }
-  controller.node?.setDirtyCanvas?.(true, true);
-  app?.graph?.setDirtyCanvas?.(true, true);
-  applyPreview(controller);
-}
-
-function applyPreview(controller, live = false) {
+function refreshPreviewState(controller) {
   const exp = controller.__h3scTimelineExp;
   if (!exp) return;
+  controller.state.canvas.show_boxes = true;
   controller.state.boxes = VISIBLE_SLOTS.map((slot) => previewBox(exp.tracks[slot], exp.t, slot)).filter(Boolean);
-  if (live) {
-    controller.draw?.();
-    return;
-  }
-  updateUI(controller);
-  controller.fitAndDraw?.();
 }
 
-function setBox(controller, slot, rawBox, live = false) {
+function drawPreview(controller) {
+  refreshPreviewState(controller);
+  controller.draw?.();
+}
+
+function assignBox(controller, slot, rawBox, creating = false) {
   const exp = controller.__h3scTimelineExp;
   const track = exp?.tracks?.[slot];
   const box = normalizeBox({ bbox_2d: rawBox }, slot);
   if (!track || !box) return false;
 
   const point = pointAt(track, exp.t);
-  const creating = controller.__h3scMultiDrag?.creating;
   if (creating || trackEmpty(track)) {
     track.start = cloneBox(box);
     track.end = cloneBox(box);
@@ -234,18 +225,54 @@ function setBox(controller, slot, rawBox, live = false) {
   exp.selectedSlot = slot;
   controller.activeSlot = slot;
   controller.state.canvas.active_slot = slot;
-  applyPreview(controller, live);
   return true;
+}
+
+function saveState(controller) {
+  const raw = JSON.stringify(serializeLayout(controller));
+  const widget = controller.stateWidget;
+  if (widget) {
+    widget.value = raw;
+    widget.serialize = true;
+    widget.options = widget.options || {};
+    widget.options.serialize = true;
+    widget.callback?.(raw, app?.canvas, controller.node, [0, 0], null);
+  }
+  controller.node?.setDirtyCanvas?.(true, true);
+  app?.graph?.setDirtyCanvas?.(true, true);
+  refreshAll(controller, true);
+}
+
+function setPlayhead(controller, value) {
+  const exp = controller.__h3scTimelineExp;
+  if (!exp) return;
+  stopPlayback(controller);
+  exp.t = clamp(Number(value) || 0, 0, 1);
+  exp.selectedSlot = null;
+  refreshAll(controller, true);
+}
+
+function setPlayheadSeconds(controller, seconds) {
+  const exp = controller.__h3scTimelineExp;
+  if (!exp) return;
+  setPlayhead(controller, clamp(Number(seconds) || 0, 0, exp.duration) / Math.max(exp.duration, 1e-9));
+}
+
+function setDuration(controller, value) {
+  const exp = controller.__h3scTimelineExp;
+  if (!exp) return;
+  exp.duration = normalizeDuration(value);
+  saveState(controller);
 }
 
 function addKey(controller) {
   const exp = controller.__h3scTimelineExp;
   const slot = controller.activeSlot;
   const track = exp?.tracks?.[slot];
-  if (!track || trackEmpty(track) || exp.t <= EPS || exp.t >= 1 - EPS || pointAt(track, exp.t) || track.keys.length >= MAX_INTERMEDIATE_KEYS) return;
+  if (!track || trackEmpty(track) || exp.t <= EPS || exp.t >= 1 - EPS) return;
+  if (pointAt(track, exp.t) || track.keys.length >= MAX_INTERMEDIATE_KEYS) return;
   const gap = MIN_KEY_GAP_SECONDS / exp.duration;
-  const times = [0, ...track.keys.map((key) => key.time), 1];
-  if (times.some((time) => Math.abs(time - exp.t) < gap)) return;
+  if ([0, ...track.keys.map((key) => key.time), 1].some((time) => Math.abs(time - exp.t) < gap)) return;
   const bbox = previewBox(track, exp.t, slot);
   if (!bbox) return;
   track.keys.push({ time: exp.t, bbox });
@@ -270,32 +297,11 @@ function jumpKey(controller, direction) {
   const track = exp?.tracks?.[controller.activeSlot];
   if (!track) return;
   const times = orderedPoints(track).map((point) => point.time);
+  if (!times.length) return;
   const target = direction < 0
     ? [...times].reverse().find((time) => time < exp.t - EPS)
     : times.find((time) => time > exp.t + EPS);
   setPlayhead(controller, target ?? (direction < 0 ? times[0] : times.at(-1)));
-}
-
-function setPlayhead(controller, t) {
-  const exp = controller.__h3scTimelineExp;
-  if (!exp) return;
-  stopPlayback(controller);
-  exp.t = clamp(Number(t) || 0, 0, 1);
-  exp.selectedSlot = null;
-  applyPreview(controller);
-}
-
-function setPlayheadSeconds(controller, seconds) {
-  const exp = controller.__h3scTimelineExp;
-  if (!exp) return;
-  setPlayhead(controller, clamp(Number(seconds) || 0, 0, exp.duration) / Math.max(exp.duration, 1e-9));
-}
-
-function setDuration(controller, value) {
-  const exp = controller.__h3scTimelineExp;
-  if (!exp) return;
-  exp.duration = normalizeDuration(value);
-  saveState(controller);
 }
 
 function stopPlayback(controller) {
@@ -304,7 +310,7 @@ function stopPlayback(controller) {
   exp.playing = false;
   if (exp.__multiRaf) cancelAnimationFrame(exp.__multiRaf);
   exp.__multiRaf = 0;
-  updateUI(controller);
+  updateUI(controller, false);
 }
 
 function startPlayback(controller) {
@@ -318,12 +324,13 @@ function startPlayback(controller) {
   const tick = (now) => {
     if (!exp.playing) return;
     exp.t = clamp(startT + (now - started) / 1000 / exp.duration, 0, 1);
-    applyPreview(controller);
+    drawPreview(controller);
+    updateUI(controller, false);
     if (exp.t >= 1) return stopPlayback(controller);
     exp.__multiRaf = requestAnimationFrame(tick);
   };
   exp.__multiRaf = requestAnimationFrame(tick);
-  updateUI(controller);
+  updateUI(controller, false);
 }
 
 function ensureStyles() {
@@ -337,10 +344,9 @@ function ensureStyles() {
 
 function buildUI(controller) {
   ensureStyles();
-  const old = controller.root?.querySelector(".h3sc-timeline-exp");
   const monitor = controller.root?.querySelector(".h3sc-monitor");
   if (!monitor) return null;
-  old?.remove();
+  controller.root.querySelector(".h3sc-timeline-exp")?.remove();
   controller.root.querySelector(".h3sc-mk")?.remove();
 
   const section = document.createElement("section");
@@ -373,12 +379,12 @@ function buildUI(controller) {
   current.title = "Current time in seconds";
   current.onchange = () => setPlayheadSeconds(controller, current.value);
   current.onkeydown = (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      setPlayheadSeconds(controller, current.value);
-      current.blur();
-    }
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    setPlayheadSeconds(controller, current.value);
+    current.blur();
   };
+
   const wrap = document.createElement("div");
   wrap.className = "h3sc-mk-range-wrap";
   const range = document.createElement("input");
@@ -405,6 +411,7 @@ function buildUI(controller) {
   duration.step = "0.5";
   duration.onchange = () => setDuration(controller, duration.value);
   endLabel.append(duration, document.createTextNode(" s"));
+
   const add = document.createElement("button");
   add.className = "h3sc-btn";
   add.textContent = "+ Key";
@@ -439,6 +446,7 @@ function renderMarkers(controller) {
   const track = exp?.tracks?.[slot];
   if (!ui?.layer || !track) return;
   ui.layer.replaceChildren();
+
   for (const point of orderedPoints(track)) {
     const marker = document.createElement("button");
     marker.className = `h3sc-mk-marker ${point.kind === "key" ? "" : "end"}`;
@@ -450,52 +458,72 @@ function renderMarkers(controller) {
       event.stopPropagation();
       setPlayhead(controller, point.time);
     };
-    if (point.kind === "key") {
-      marker.onpointerdown = (event) => {
-        if (event.button !== 0) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const ref = track.keys[point.index];
-        const rect = ui.wrap.getBoundingClientRect();
-        const move = (e) => {
-          const live = exp.tracks[slot];
-          const index = live.keys.indexOf(ref);
-          if (index < 0) return;
-          const gap = MIN_KEY_GAP_SECONDS / exp.duration;
-          const ordered = live.keys.slice().sort((a, b) => a.time - b.time);
-          const pos = ordered.indexOf(ref);
-          const lo = pos > 0 ? ordered[pos - 1].time + gap : gap;
-          const hi = pos < ordered.length - 1 ? ordered[pos + 1].time - gap : 1 - gap;
-          ref.time = clamp((e.clientX - rect.left) / Math.max(rect.width, 1), lo, hi);
-          live.keys.sort((a, b) => a.time - b.time);
-          syncLegacyMid(live);
-          exp.t = ref.time;
-          applyPreview(controller);
-        };
-        const up = () => {
-          window.removeEventListener("pointermove", move, true);
-          window.removeEventListener("pointerup", up, true);
-          saveState(controller);
-        };
-        window.addEventListener("pointermove", move, true);
-        window.addEventListener("pointerup", up, true);
-      };
-    }
+    if (point.kind === "key") marker.onpointerdown = (event) => startMarkerDrag(controller, slot, point.index, event);
     ui.layer.append(marker);
   }
 }
 
-function updateUI(controller) {
+function startMarkerDrag(controller, slot, index, event) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const exp = controller.__h3scTimelineExp;
+  const ui = controller.__h3scMultiUI;
+  const ref = exp?.tracks?.[slot]?.keys?.[index];
+  if (!ref || !ui?.wrap) return;
+
+  const rect = ui.wrap.getBoundingClientRect();
+  let raf = 0;
+  let pendingX = event.clientX;
+
+  const apply = () => {
+    raf = 0;
+    const live = exp.tracks[slot];
+    if (!live?.keys?.includes(ref)) return;
+    const gap = MIN_KEY_GAP_SECONDS / exp.duration;
+    const ordered = live.keys.slice().sort((a, b) => a.time - b.time);
+    const pos = ordered.indexOf(ref);
+    const lo = pos > 0 ? ordered[pos - 1].time + gap : gap;
+    const hi = pos < ordered.length - 1 ? ordered[pos + 1].time - gap : 1 - gap;
+    ref.time = clamp((pendingX - rect.left) / Math.max(rect.width, 1), lo, hi);
+    live.keys.sort((a, b) => a.time - b.time);
+    syncLegacyMid(live);
+    exp.t = ref.time;
+    drawPreview(controller);
+    updateUI(controller, false);
+  };
+
+  const move = (moveEvent) => {
+    pendingX = moveEvent.clientX;
+    if (!raf) raf = requestAnimationFrame(apply);
+  };
+
+  const up = () => {
+    window.removeEventListener("pointermove", move, true);
+    window.removeEventListener("pointerup", up, true);
+    if (raf) cancelAnimationFrame(raf);
+    apply();
+    saveState(controller);
+  };
+
+  window.addEventListener("pointermove", move, true);
+  window.addEventListener("pointerup", up, true);
+}
+
+function updateUI(controller, markers = true) {
   const exp = controller.__h3scTimelineExp;
   const ui = controller.__h3scMultiUI;
   if (!exp || !ui) return;
+
   const slot = controller.activeSlot;
   const track = exp.tracks?.[slot];
   const point = pointAt(track, exp.t);
   const seconds = exp.t * exp.duration;
   const count = track?.keys?.length ?? 0;
+
   ui.time.textContent = `${seconds.toFixed(2)}s`;
-  if (ui.current && document.activeElement !== ui.current) {
+  if (document.activeElement !== ui.current) {
     ui.current.max = exp.duration.toFixed(2);
     ui.current.value = seconds.toFixed(2);
   }
@@ -505,6 +533,7 @@ function updateUI(controller) {
   ui.count.textContent = `${SLOT_LABELS[slot] ?? "?"}: ${count}/${MAX_INTERMEDIATE_KEYS} keys`;
   ui.del.disabled = point?.kind !== "key";
   ui.add.disabled = !track || trackEmpty(track) || Boolean(point) || exp.t <= EPS || exp.t >= 1 - EPS || count >= MAX_INTERMEDIATE_KEYS;
+
   if (controller.drawButton) controller.drawButton.disabled = !point && !trackEmpty(track);
   controller.canvas?.classList.toggle("h3sc-timeline-preview-only", !point);
   const danger = controller.root?.querySelector(".h3sc-toolbar .h3sc-btn.danger");
@@ -527,7 +556,14 @@ function updateUI(controller) {
     ui.note.textContent = "Use + Key to make the current time editable for the active slot.";
     ui.note.classList.add("warn");
   }
-  renderMarkers(controller);
+
+  if (markers) renderMarkers(controller);
+}
+
+function refreshAll(controller, markers = true) {
+  refreshPreviewState(controller);
+  updateUI(controller, markers);
+  controller.draw?.();
 }
 
 function hitTest(controller, point) {
@@ -540,140 +576,142 @@ function hitTest(controller, point) {
     for (const [handle, [x, y]] of Object.entries(corners)) {
       if (Math.abs(point.x - x) <= tx && Math.abs(point.y - y) <= ty) return { box, mode: "resize", handle };
     }
-    if (point.x >= x1 && point.x <= x2 && point.y >= y1 && point.y <= y2) return { box, mode: "move" };
+    if (point.x >= x1 && point.x <= x2 && point.y >= y1 && point.y <= y2) return { box, mode: "move", handle: null };
   }
   return null;
 }
 
-function wireCanvas(controller) {
+function eventPoint(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: clamp(VIEW_MIN + (event.clientX - rect.left) / Math.max(rect.width, 1) * VIEW_SPAN, INTERNAL_MIN, INTERNAL_MAX),
+    y: clamp(VIEW_MIN + (event.clientY - rect.top) / Math.max(rect.height, 1) * VIEW_SPAN, INTERNAL_MIN, INTERNAL_MAX),
+    rect,
+  };
+}
+
+function rectFromPoints(a, b) {
+  return [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)];
+}
+
+function bindCanvas(controller) {
   const canvas = controller.canvas;
   const exp = controller.__h3scTimelineExp;
   if (!canvas || !exp) return;
-  if (canvas.__h3scMultiCanvasEvents) return;
+  if (controller.__h3scMultiCanvas === canvas) return;
   controller.__h3scMultiCanvasCleanup?.();
-  canvas.__h3scMultiCanvasEvents = true;
 
-  const eventPoint = (event) => {
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: clamp(VIEW_MIN + (event.clientX - rect.left) / Math.max(rect.width, 1) * VIEW_SPAN, INTERNAL_MIN, INTERNAL_MAX),
-      y: clamp(VIEW_MIN + (event.clientY - rect.top) / Math.max(rect.height, 1) * VIEW_SPAN, INTERNAL_MIN, INTERNAL_MAX),
-      rect,
-    };
-  };
-  const consume = (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation?.();
-  };
+  let drag = null;
 
   const begin = (event) => {
     if (event.button !== 0) return;
-    controller.__h3scMultiDrag = null;
-    const point = eventPoint(event);
+    const point = eventPoint(canvas, event);
     const hit = hitTest(controller, point);
 
     if (hit) {
       const slot = hit.box.slot;
+      if (!pointAt(exp.tracks[slot], exp.t)) {
+        updateUI(controller, false);
+        return;
+      }
       controller.activeSlot = slot;
       controller.state.canvas.active_slot = slot;
       exp.selectedSlot = slot;
-      if (!pointAt(exp.tracks[slot], exp.t)) {
-        consume(event);
-        updateUI(controller);
-        return;
-      }
-      controller.__h3scMultiDrag = {
-        pointerId: event.pointerId,
-        mode: hit.mode,
-        handle: hit.handle,
-        start: point,
-        original: [...hit.box.bbox_2d],
-        creating: false,
-        slot,
-      };
+      drag = { pointerId: event.pointerId, slot, mode: hit.mode, handle: hit.handle, start: point, original: [...hit.box.bbox_2d], creating: false, pending: null, raf: 0 };
     } else if (controller.drawMode) {
       const slot = controller.activeSlot;
       const track = exp.tracks[slot];
       const creating = trackEmpty(track);
       if (!pointAt(track, exp.t) && !(creating && (exp.t <= EPS || exp.t >= 1 - EPS))) {
-        consume(event);
-        updateUI(controller);
+        updateUI(controller, false);
         return;
       }
       exp.selectedSlot = slot;
-      controller.__h3scMultiDrag = { pointerId: event.pointerId, mode: "draw", start: point, creating, slot };
+      drag = { pointerId: event.pointerId, slot, mode: "draw", handle: null, start: point, original: null, creating, pending: null, raf: 0 };
     } else {
       return;
     }
 
-    consume(event);
+    event.preventDefault();
+    event.stopPropagation();
     canvas.focus?.();
     canvas.setPointerCapture?.(event.pointerId);
   };
 
-  const move = (event) => {
-    const drag = controller.__h3scMultiDrag;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    consume(event);
-    const point = eventPoint(event);
-    let box;
-
-    if (drag.mode === "draw") {
-      box = [Math.min(drag.start.x, point.x), Math.min(drag.start.y, point.y), Math.max(drag.start.x, point.x), Math.max(drag.start.y, point.y)];
-    } else if (drag.mode === "move") {
+  const computeBox = (point) => {
+    if (!drag) return null;
+    if (drag.mode === "draw") return rectFromPoints(drag.start, point);
+    if (drag.mode === "move") {
       const [x1, y1, x2, y2] = drag.original;
       const width = x2 - x1;
       const height = y2 - y1;
       const nx = clamp(x1 + point.x - drag.start.x, INTERNAL_MIN, INTERNAL_MAX - width);
       const ny = clamp(y1 + point.y - drag.start.y, INTERNAL_MIN, INTERNAL_MAX - height);
-      box = [nx, ny, nx + width, ny + height];
-    } else {
-      let [x1, y1, x2, y2] = drag.original;
-      if (drag.handle.includes("n")) y1 = point.y;
-      if (drag.handle.includes("s")) y2 = point.y;
-      if (drag.handle.includes("w")) x1 = point.x;
-      if (drag.handle.includes("e")) x2 = point.x;
-      box = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
+      return [nx, ny, nx + width, ny + height];
     }
 
-    if (box[2] - box[0] >= 1 && box[3] - box[1] >= 1) setBox(controller, drag.slot, box, true);
+    let [x1, y1, x2, y2] = drag.original;
+    if (drag.handle.includes("n")) y1 = point.y;
+    if (drag.handle.includes("s")) y2 = point.y;
+    if (drag.handle.includes("w")) x1 = point.x;
+    if (drag.handle.includes("e")) x2 = point.x;
+    return [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
+  };
+
+  const flushLive = () => {
+    if (!drag) return;
+    drag.raf = 0;
+    const box = drag.pending;
+    if (!box || box[2] - box[0] < 1 || box[3] - box[1] < 1) return;
+    if (assignBox(controller, drag.slot, box, drag.creating)) drawPreview(controller);
+  };
+
+  const move = (event) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    drag.pending = computeBox(eventPoint(canvas, event));
+    if (!drag.raf) drag.raf = requestAnimationFrame(flushLive);
   };
 
   const finish = (event) => {
-    const drag = controller.__h3scMultiDrag;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    consume(event);
-    if (drag.mode === "draw") {
-      const point = eventPoint(event);
-      const box = [Math.min(drag.start.x, point.x), Math.min(drag.start.y, point.y), Math.max(drag.start.x, point.x), Math.max(drag.start.y, point.y)];
-      if (box[2] - box[0] >= 12 && box[3] - box[1] >= 12) setBox(controller, drag.slot, box, true);
-    }
-    controller.__h3scMultiDrag = null;
-    try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (drag.raf) cancelAnimationFrame(drag.raf);
+    const box = computeBox(eventPoint(canvas, event));
+    const minSize = drag.mode === "draw" ? 12 : 1;
+    if (box && box[2] - box[0] >= minSize && box[3] - box[1] >= minSize) assignBox(controller, drag.slot, box, drag.creating);
+
+    const pointerId = drag.pointerId;
+    drag = null;
+    try { canvas.releasePointerCapture?.(pointerId); } catch {}
     saveState(controller);
   };
 
   const cancel = (event) => {
-    const drag = controller.__h3scMultiDrag;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    consume(event);
-    controller.__h3scMultiDrag = null;
-    try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
-    applyPreview(controller);
+    if (drag.raf) cancelAnimationFrame(drag.raf);
+    const pointerId = drag.pointerId;
+    drag = null;
+    try { canvas.releasePointerCapture?.(pointerId); } catch {}
+    refreshAll(controller, true);
   };
 
-  canvas.addEventListener("pointerdown", begin, true);
-  canvas.addEventListener("pointermove", move, true);
-  canvas.addEventListener("pointerup", finish, true);
-  canvas.addEventListener("pointercancel", cancel, true);
+  canvas.onpointerdown = begin;
+  canvas.onpointermove = move;
+  canvas.onpointerup = finish;
+  canvas.onpointercancel = cancel;
+  canvas.style.touchAction = "none";
 
+  controller.__h3scMultiCanvas = canvas;
   controller.__h3scMultiCanvasCleanup = () => {
-    canvas.removeEventListener("pointerdown", begin, true);
-    canvas.removeEventListener("pointermove", move, true);
-    canvas.removeEventListener("pointerup", finish, true);
-    canvas.removeEventListener("pointercancel", cancel, true);
-    canvas.__h3scMultiCanvasEvents = false;
+    if (canvas.onpointerdown === begin) canvas.onpointerdown = null;
+    if (canvas.onpointermove === move) canvas.onpointermove = null;
+    if (canvas.onpointerup === finish) canvas.onpointerup = null;
+    if (canvas.onpointercancel === cancel) canvas.onpointercancel = null;
+    if (controller.__h3scMultiCanvas === canvas) controller.__h3scMultiCanvas = null;
   };
 }
 
@@ -691,7 +729,7 @@ function install(node, configuredRaw = null) {
   const previousDestroy = controller.destroy?.bind(controller);
 
   controller.sync = () => saveState(controller);
-  controller.upsertBox = (slot, bbox) => { if (setBox(controller, slot, bbox)) saveState(controller); };
+  controller.upsertBox = (slot, bbox) => { if (assignBox(controller, slot, bbox, false)) saveState(controller); };
   controller.removeBox = (slot) => {
     const track = controller.__h3scTimelineExp?.tracks?.[slot];
     if (!track) return;
@@ -706,13 +744,13 @@ function install(node, configuredRaw = null) {
     previousRender();
     upgradeState(controller, controller.stateWidget?.value);
     controller.__h3scMultiUI = buildUI(controller);
-    wireCanvas(controller);
-    applyPreview(controller);
+    bindCanvas(controller);
+    refreshAll(controller, true);
   };
 
   controller.updateControls = () => {
     previousUpdate();
-    updateUI(controller);
+    updateUI(controller, false);
   };
 
   if (previousReload) {
@@ -720,8 +758,8 @@ function install(node, configuredRaw = null) {
       previousReload();
       upgradeState(controller, controller.stateWidget?.value);
       controller.__h3scMultiUI = buildUI(controller);
-      wireCanvas(controller);
-      applyPreview(controller);
+      bindCanvas(controller);
+      refreshAll(controller, true);
     };
   }
 
@@ -734,11 +772,9 @@ function install(node, configuredRaw = null) {
     if (!slot || !pointAt(exp.tracks[slot], exp.t)) return;
     event.preventDefault();
     event.stopPropagation();
-    event.stopImmediatePropagation?.();
     controller.removeBox(slot);
   };
 
-  controller.__h3scMultiKeyHandler = keyHandler;
   window.addEventListener("keydown", keyHandler, true);
   controller.destroy = () => {
     stopPlayback(controller);
@@ -766,7 +802,7 @@ function wrapNodeType(nodeType, nodeData) {
   };
   const configured = nodeType.prototype.onConfigure;
   nodeType.prototype.onConfigure = function (info) {
-    const index = this.widgets?.findIndex((w) => w.name === "layout_json") ?? -1;
+    const index = this.widgets?.findIndex((widget) => widget.name === "layout_json") ?? -1;
     const raw = index >= 0 && Array.isArray(info?.widgets_values) ? info.widgets_values[index] : null;
     const result = configured?.apply(this, arguments);
     queueMicrotask(() => patchWhenReady(this, raw));
