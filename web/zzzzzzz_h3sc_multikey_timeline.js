@@ -598,7 +598,6 @@ function bindCanvas(controller) {
   const canvas = controller.canvas;
   const exp = controller.__h3scTimelineExp;
   if (!canvas || !exp) return;
-  if (controller.__h3scMultiCanvas === canvas) return;
   controller.__h3scMultiCanvasCleanup?.();
 
   let drag = null;
