@@ -37,7 +37,7 @@ def main() -> int:
         actual = hashlib.sha256(canonical_bytes(path)).hexdigest()
         checked += 1
         if actual.lower() != expected.lower():
-            failures.append(f"MISMATCH {relative}")
+            failures.append(f"MISMATCH {relative} actual={actual}")
     if failures:
         print("\n".join(failures))
         print(f"Manifest FAIL: {len(failures)} problem(s), {checked} file(s) checked")
