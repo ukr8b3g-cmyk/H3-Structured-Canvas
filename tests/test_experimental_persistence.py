@@ -24,6 +24,15 @@ class ExperimentalPersistenceContractTests(unittest.TestCase):
         ):
             self.assertIn(required, source)
 
+    def test_audio_optional_is_restored_and_persisted(self):
+        source = TIMELINE_JS.read_text(encoding="utf-8")
+        self.assertNotIn('controller.state.soundscape = "";', source)
+        self.assertNotIn('controller.state.music = "";', source)
+        self.assertIn('title !== "AUDIO / OPTIONAL" && title !== "音声 / 任意"', source)
+        self.assertIn('controller.state.custom_instruction = "";', source)
+        self.assertIn('controller.state.camera = { motion: "Static Shot", speed: "auto", amplitude: "auto" }', source)
+        self.assertIn('scroll.querySelectorAll(":scope > .h3sc-card")', source)
+
     def test_workflow_reload_is_authoritative_for_prompt_and_layout(self):
         source = TIMELINE_JS.read_text(encoding="utf-8")
         self.assertIn("configuredRaw", source)

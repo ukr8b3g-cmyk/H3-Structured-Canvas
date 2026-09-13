@@ -533,12 +533,16 @@ function installCanvas(node, configuredRaw = null) {
 }
 
 function applyPrompterState(controller) {
-  if (!controller?.state) return; for (const slot of VISIBLE_SLOTS) if (controller.state.slots?.[slot]) controller.state.slots[slot].motion = "start_end"; for (const slot of HIDDEN_SLOTS) if (controller.state.slots?.[slot]) controller.state.slots[slot].enabled = false; controller.state.camera = { motion: "Static Shot", speed: "auto", amplitude: "auto" }; controller.state.soundscape = ""; controller.state.music = ""; controller.state.custom_instruction = "";
+  if (!controller?.state) return; for (const slot of VISIBLE_SLOTS) if (controller.state.slots?.[slot]) controller.state.slots[slot].motion = "start_end"; for (const slot of HIDDEN_SLOTS) if (controller.state.slots?.[slot]) controller.state.slots[slot].enabled = false; controller.state.camera = { motion: "Static Shot", speed: "auto", amplitude: "auto" }; controller.state.custom_instruction = "";
 }
 
 function applyPrompterDOM(controller) {
   ensureStyles(); const scroll = controller.root?.querySelector(".h3sc-scroll"); if (!scroll) return; const topbar = scroll.querySelector(":scope > .h3sc-topbar"); if (topbar) { const fields = [...topbar.querySelectorAll(":scope > .h3sc-field")]; fields.slice(1).forEach((field) => field.remove()); [...topbar.querySelectorAll(":scope > button")].forEach((button) => button.remove()); if (!topbar.querySelector(".h3sc-exp-prompter-note")) { const note = document.createElement("span"); note.className = "h3sc-exp-prompter-note"; note.textContent = "3-Slot Timeline Experimental · A/B/C START → MID → END"; topbar.append(note); } }
-  scroll.querySelectorAll(":scope > .h3sc-slot-card").forEach((card) => { const slot = card.querySelector(".h3sc-slot-chip")?.textContent?.trim()?.toLowerCase(); if (HIDDEN_SLOTS.includes(slot)) { card.remove(); return; } if (VISIBLE_SLOTS.includes(slot)) { const motion = card.querySelectorAll(".h3sc-slot-controls select")[1]; if (motion) { motion.value = "start_end"; motion.disabled = true; motion.classList.add("h3sc-exp-motion-locked"); } } }); scroll.querySelectorAll(":scope > .h3sc-card, :scope > details.h3sc-details").forEach((element) => element.remove());
+  scroll.querySelectorAll(":scope > .h3sc-slot-card").forEach((card) => { const slot = card.querySelector(".h3sc-slot-chip")?.textContent?.trim()?.toLowerCase(); if (HIDDEN_SLOTS.includes(slot)) { card.remove(); return; } if (VISIBLE_SLOTS.includes(slot)) { const motion = card.querySelectorAll(".h3sc-slot-controls select")[1]; if (motion) { motion.value = "start_end"; motion.disabled = true; motion.classList.add("h3sc-exp-motion-locked"); } } }); scroll.querySelectorAll(":scope > .h3sc-card").forEach((element) => element.remove());
+  scroll.querySelectorAll(":scope > details.h3sc-details").forEach((element) => {
+    const title = element.querySelector(":scope > summary")?.textContent?.trim();
+    if (title !== "AUDIO / OPTIONAL" && title !== "音声 / 任意") element.remove();
+  });
 }
 
 function validConfig(value) { const parsed = parseObject(value); return parsed?.slots && typeof parsed.slots === "object"; }
