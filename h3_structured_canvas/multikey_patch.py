@@ -7,6 +7,7 @@ intermediate keyframes while preserving old workflow behavior.
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any
 
 from . import correctness as _base
@@ -14,6 +15,7 @@ from . import correctness as _base
 MAX_INTERMEDIATE_KEYS = 7
 DURATION_MIN = 5.0
 DURATION_MAX = 15.0
+MIN_KEY_GAP_SECONDS = 0.05
 EPS = 0.0005
 
 
@@ -21,6 +23,8 @@ def _duration(value: Any) -> float:
     try:
         value = float(value)
     except (TypeError, ValueError, OverflowError):
+        value = 5.0
+    if not math.isfinite(value):
         value = 5.0
     return max(DURATION_MIN, min(DURATION_MAX, value))
 
@@ -30,6 +34,7 @@ def _parse_keyframes(schema_module: Any, timeline: dict[str, Any]) -> dict[str, 
     raw = timeline.get("keyframes")
     if not isinstance(raw, dict):
         return result
+    min_gap = MIN_KEY_GAP_SECONDS / _duration(timeline.get("duration_seconds"))
     for slot in schema_module.SLOTS:
         items = raw.get(slot)
         if not isinstance(items, list):
@@ -49,8 +54,12 @@ def _parse_keyframes(schema_module: Any, timeline: dict[str, Any]) -> dict[str, 
         parsed.sort(key=lambda item: item["time"])
         unique: list[dict[str, Any]] = []
         for item in parsed:
+            if item["time"] < min_gap or 1.0 - item["time"] < min_gap:
+                continue
             if unique and abs(unique[-1]["time"] - item["time"]) <= EPS:
                 unique[-1] = item
+            elif unique and item["time"] - unique[-1]["time"] < min_gap:
+                continue
             else:
                 unique.append(item)
         if unique:
