@@ -146,17 +146,31 @@ function syncLegacyMid(track) {
   track.midExplicit = Boolean(mid);
 }
 
-function importKeys(track, rawTimeline, slot) {
+function importKeys(track, rawTimeline, slot, duration) {
   const rawKeys = Array.isArray(rawTimeline?.keyframes?.[slot]) ? rawTimeline.keyframes[slot] : [];
+  const gap = MIN_KEY_GAP_SECONDS / Math.max(normalizeDuration(duration), 1e-9);
   const keys = [];
   for (const item of rawKeys) {
     const time = Number(item?.time ?? item?.t);
     const bbox = normalizeBox(item, slot);
-    if (Number.isFinite(time) && time > 0 && time < 1 && bbox) keys.push({ time, bbox });
+    if (Number.isFinite(time) && time >= gap && time <= 1 - gap && bbox) keys.push({ time, bbox });
   }
-  if (!keys.length && track?.midExplicit && track.mid) keys.push({ time: 0.5, bbox: cloneBox(track.mid) });
   keys.sort((a, b) => a.time - b.time);
-  track.keys = keys.slice(0, MAX_INTERMEDIATE_KEYS);
+  const normalized = [];
+  for (const key of keys) {
+    const previous = normalized.at(-1);
+    if (previous && Math.abs(previous.time - key.time) <= EPS) {
+      normalized[normalized.length - 1] = key;
+    } else if (previous && key.time - previous.time < gap) {
+      continue;
+    } else {
+      normalized.push(key);
+    }
+  }
+  if (!normalized.length && track?.midExplicit && track.mid) {
+    normalized.push({ time: 0.5, bbox: cloneBox(track.mid) });
+  }
+  track.keys = normalized.slice(0, MAX_INTERMEDIATE_KEYS);
   syncLegacyMid(track);
 }
 
@@ -170,7 +184,7 @@ function upgradeState(controller, rawValue) {
   exp.tracks ??= {};
   for (const slot of VISIBLE_SLOTS) {
     exp.tracks[slot] ??= { start: null, mid: null, end: null, midExplicit: false, keys: [] };
-    importKeys(exp.tracks[slot], timeline, slot);
+    importKeys(exp.tracks[slot], timeline, slot, exp.duration);
   }
 }
 
