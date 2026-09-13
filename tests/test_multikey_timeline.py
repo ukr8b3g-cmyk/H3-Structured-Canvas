@@ -66,6 +66,50 @@ class MultiKeyTimelineTests(unittest.TestCase):
         self.assertEqual(low["timeline_experimental"]["duration_seconds"], 5.0)
         self.assertEqual(high["timeline_experimental"]["duration_seconds"], 15.0)
 
+    def test_duration_nonfinite_values_fall_back_to_five_seconds(self):
+        nan_result, _ = schema.sanitize_layout(multikey_layout(float("nan")))
+        inf_result, _ = schema.sanitize_layout(multikey_layout(float("inf")))
+        self.assertEqual(nan_result["timeline_experimental"]["duration_seconds"], 5.0)
+        self.assertEqual(inf_result["timeline_experimental"]["duration_seconds"], 5.0)
+
+    def test_schema_normalizes_keys_to_minimum_time_gap(self):
+        layout = multikey_layout(10.0)
+        layout["timeline_experimental"]["keyframes"]["a"] = [
+            {"time": 0.003, "bbox_2d": [100, 100, 300, 500]},
+            {"time": 0.200, "bbox_2d": [160, 120, 380, 620]},
+            {"time": 0.203, "bbox_2d": [200, 100, 420, 600]},
+            {"time": 0.206, "bbox_2d": [240, 120, 460, 620]},
+            {"time": 0.997, "bbox_2d": [700, 100, 900, 600]},
+        ]
+        result, _ = schema.sanitize_layout(layout)
+        keys = result["timeline_experimental"]["keyframes"]["a"]
+        self.assertEqual([item["time"] for item in keys], [0.2, 0.206])
+
+    def test_schema_preserves_seven_independent_keys_for_visible_slots(self):
+        layout = multikey_layout(15.0)
+        layout["boxes"] = [
+            {"slot": "a", "bbox_2d": [80, 500, 300, 980]},
+            {"slot": "b", "bbox_2d": [350, 500, 570, 980]},
+            {"slot": "c", "bbox_2d": [620, 500, 840, 980]},
+        ]
+        layout["transition"]["end_boxes"] = [
+            {"slot": "a", "bbox_2d": [700, 500, 920, 980]},
+            {"slot": "b", "bbox_2d": [430, 500, 650, 980]},
+            {"slot": "c", "bbox_2d": [160, 500, 380, 980]},
+        ]
+        times = [0.1, 0.2, 0.3, 0.4, 0.6, 0.75, 0.9]
+        layout["timeline_experimental"]["keyframes"] = {
+            slot: [
+                {"time": time, "bbox_2d": [100 + index * 60, 100, 300 + index * 60, 600]}
+                for index, time in enumerate(times)
+            ]
+            for slot in ("a", "b", "c")
+        }
+        result, _ = schema.sanitize_layout(layout)
+        keyframes = result["timeline_experimental"]["keyframes"]
+        for slot in ("a", "b", "c"):
+            self.assertEqual([item["time"] for item in keyframes[slot]], times)
+
     def test_compiler_emits_all_intermediate_keys_and_segments(self):
         prompt, structure, _ = compiler.compile_h3_prompt(multikey_layout(), config())
         trajectory = structure["model_structure"]["elements"][0]["trajectory"]
@@ -98,6 +142,9 @@ class MultiKeyTimelineTests(unittest.TestCase):
         self.assertIn("interpolateBox(left.bbox, right.bbox", source)
         self.assertIn("canonical_time: \"normalized_0_1\"", source)
         self.assertIn("MIN_KEY_GAP_SECONDS / exp.duration", source)
+        self.assertIn("MIN_KEY_GAP_SECONDS / Math.max(normalizeDuration(duration), 1e-9)", source)
+        self.assertIn("key.time - previous.time < gap", source)
+        self.assertIn("importKeys(exp.tracks[slot], timeline, slot, exp.duration)", source)
 
     def test_frontend_canvas_interaction_engine_avoids_known_regressions(self):
         source = MULTIKEY_JS.read_text(encoding="utf-8")
