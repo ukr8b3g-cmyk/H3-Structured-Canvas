@@ -1,0 +1,46 @@
+name: audio-restore-patch
+
+on:
+  push:
+    branches: [experimental/multi-key-timeline-v1]
+    paths:
+      - '.github/audio_restore_patch.py'
+      - '.github/workflows/audio_restore_patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: experimental/multi-key-timeline-v1
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply focused audio restore
+        run: python .github/audio_restore_patch.py
+      - name: Focused regression tests
+        env:
+          PYTHONPATH: tests
+        run: |
+          python -m unittest tests.test_experimental_persistence tests.test_compiler -v
+          node --check web/zzzzz_h3sc_timeline_experimental.js
+          python tools/verify_manifest.py
+      - name: Commit product change
+        run: |
+          if git diff --quiet; then
+            echo 'No product changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/zzzzz_h3sc_timeline_experimental.js tests/test_experimental_persistence.py PACKAGE_MANIFEST.sha256
+          git commit -m 'feat(experimental): restore optional audio controls'
+          git push origin HEAD:experimental/multi-key-timeline-v1
