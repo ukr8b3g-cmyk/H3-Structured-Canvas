@@ -3,7 +3,7 @@ const app = appModule?.app ?? appModule;
 
 const CANVAS_NODE = "H3StructuredCanvas";
 const PROMPTER_NODE = "H3StructuredPrompter";
-const EXTENSION_NAME = "h3.structured.canvas.legacy_output_migration.v2";
+const EXTENSION_NAME = "h3.structured.canvas.legacy_output_migration.v3";
 
 function graphLink(id) {
   const links = app?.graph?.links;
@@ -33,6 +33,14 @@ function isLegacyCanvas(outputs) {
     && outputs[1]?.type === "STRING"
     && outputs[2]?.type === "INT"
     && outputs[3]?.type === "INT";
+}
+
+function isPreSlotImageCanvas(outputs) {
+  return Array.isArray(outputs)
+    && outputs.length === 3
+    && outputs[0]?.type === "H3_LAYOUT"
+    && outputs[1]?.type === "INT"
+    && outputs[2]?.type === "INT";
 }
 
 function isLegacyPrompter(outputs) {
@@ -69,23 +77,38 @@ function publicOutput(output, name, type, links) {
   };
 }
 
+function canvasOutputs(layout, width, height) {
+  return [
+    publicOutput(layout, "layout", "H3_LAYOUT", outputLinks(layout)),
+    publicOutput(width, "width", "INT", outputLinks(width)),
+    publicOutput(height, "height", "INT", outputLinks(height)),
+    publicOutput(null, "A", "IMAGE", []),
+    publicOutput(null, "B", "IMAGE", []),
+    publicOutput(null, "C", "IMAGE", []),
+  ];
+}
+
 function migrateLegacyCanvasOutputs(node) {
   const outputs = node?.outputs;
   if (!isLegacyCanvas(outputs)) return false;
   if (!allLinksReady(outputs)) return false;
 
   const [layout, legacyJson, width, height] = outputs;
-  const layoutLinks = outputLinks(layout);
-  const widthLinks = outputLinks(width);
-  const heightLinks = outputLinks(height);
-
   remapOriginSlots(node, [1], { 2: 1, 3: 2 });
+  node.outputs = canvasOutputs(layout, width, height);
+  node.setDirtyCanvas?.(true, true);
+  app?.graph?.setDirtyCanvas?.(true, true);
+  app?.graph?.change?.();
+  return true;
+}
 
-  node.outputs = [
-    publicOutput(layout, "layout", "H3_LAYOUT", layoutLinks),
-    publicOutput(width, "width", "INT", widthLinks),
-    publicOutput(height, "height", "INT", heightLinks),
-  ];
+function migratePreSlotImageCanvasOutputs(node) {
+  const outputs = node?.outputs;
+  if (!isPreSlotImageCanvas(outputs)) return false;
+  if (!allLinksReady(outputs)) return false;
+
+  const [layout, width, height] = outputs;
+  node.outputs = canvasOutputs(layout, width, height);
   node.setDirtyCanvas?.(true, true);
   app?.graph?.setDirtyCanvas?.(true, true);
   app?.graph?.change?.();
@@ -108,8 +131,12 @@ function migrateLegacyPrompterOutputs(node) {
   return true;
 }
 
+function migrateCanvasOutputs(node) {
+  return migrateLegacyCanvasOutputs(node) || migratePreSlotImageCanvasOutputs(node);
+}
+
 function migrateLegacyOutputs(node, nodeName) {
-  if (nodeName === CANVAS_NODE) return migrateLegacyCanvasOutputs(node);
+  if (nodeName === CANVAS_NODE) return migrateCanvasOutputs(node);
   if (nodeName === PROMPTER_NODE) return migrateLegacyPrompterOutputs(node);
   return false;
 }
@@ -128,8 +155,8 @@ if (app?.registerExtension) {
     name: EXTENSION_NAME,
     beforeRegisterNodeDef(nodeType, nodeData) {
       if (![CANVAS_NODE, PROMPTER_NODE].includes(nodeData.name)) return;
-      if (nodeType.prototype.__h3scLegacyOutputsV2) return;
-      nodeType.prototype.__h3scLegacyOutputsV2 = true;
+      if (nodeType.prototype.__h3scLegacyOutputsV3) return;
+      nodeType.prototype.__h3scLegacyOutputsV3 = true;
 
       const oldCreated = nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated = function () {
