@@ -37,6 +37,7 @@ def main() -> int:
         actual = hashlib.sha256(canonical_bytes(path)).hexdigest()
         checked += 1
         if actual.lower() != expected.lower():
+            print(f"HASH {actual}  {relative}")
             failures.append(f"MISMATCH {relative}")
     if failures:
         print("\n".join(failures))
