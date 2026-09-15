@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any
 
 from .compiler import compile_h3_prompt
@@ -11,6 +12,7 @@ from .schema import DEFAULT_CONFIG_JSON, DEFAULT_LAYOUT_JSON, sanitize_layout
 CATEGORY = "MiniMax H3/Structured Prompt"
 _RUNTIME_SLOT_IMAGES = "_h3_slot_images"
 _VISIBLE_IMAGE_SLOTS = ("a", "b", "c")
+_H3_FPS = 24
 
 
 def _semantic_layout(layout: Any) -> Any:
@@ -31,24 +33,77 @@ def _runtime_slot_images(layout: Any) -> dict[str, Any]:
     return images if isinstance(images, dict) else {}
 
 
+def _connected_slot_images(layout: Any) -> list[tuple[str, Any]]:
+    images = _runtime_slot_images(layout)
+    return [(slot, images[slot]) for slot in _VISIBLE_IMAGE_SLOTS if images.get(slot) is not None]
+
+
 def _picture_mapping_suffix(layout: Any) -> str:
     """Build deterministic <Picture n> mapping for connected A/B/C images.
 
-    MiniMax H3 Reference to Video numbers only the connected reference images,
-    in input order. Mirror that compaction here so A/C becomes Picture 1/2 when
-    B is disconnected.
+    MiniMax H3 Reference to Video numbers only connected reference images in
+    input order. Mirror that compaction here so A/C becomes Picture 1/2 when B
+    is disconnected.
     """
-    images = _runtime_slot_images(layout)
-    connected = [slot for slot in _VISIBLE_IMAGE_SLOTS if images.get(slot) is not None]
+    connected = _connected_slot_images(layout)
     if not connected:
         return ""
     lines = ["Reference image mapping:"]
-    for ordinal, slot in enumerate(connected, start=1):
+    for ordinal, (slot, _image) in enumerate(connected, start=1):
         lines.append(f"- <Picture {ordinal}> is the visual reference for Slot {slot.upper()}.")
     lines.append(
         "Preserve each mapped slot's identity and appearance from its assigned picture while following its Canvas layout and motion."
     )
     return "\n".join(lines)
+
+
+def _h3_frame_count(layout: Any) -> int:
+    """Convert the Canvas timeline duration to MiniMax H3's 17k+5 frame grid."""
+    duration = 5.0
+    if isinstance(layout, dict):
+        timeline = layout.get("timeline_experimental")
+        if isinstance(timeline, dict):
+            try:
+                parsed = float(timeline.get("duration_seconds", duration))
+                if math.isfinite(parsed):
+                    duration = max(5.0, min(15.0, parsed))
+            except (TypeError, ValueError, OverflowError):
+                pass
+    frames = max(5, int(round(duration * _H3_FPS)))
+    while frames % 17 != 5:
+        frames += 1
+    return frames
+
+
+def _core_reference_to_video(
+    *,
+    clip: Any,
+    vae: Any,
+    prompt: str,
+    width: int,
+    height: int,
+    length: int,
+    ref_images: dict[str, Any],
+) -> Any:
+    """Call ComfyUI Core's MiniMax H3 reference-conditioning implementation."""
+    try:
+        from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo
+    except (ImportError, AttributeError) as exc:
+        raise RuntimeError(
+            "MiniMax H3 Reference to Video is not available in this ComfyUI Core. "
+            "Update ComfyUI to a version that includes MiniMaxH3ReferenceToVideo."
+        ) from exc
+
+    return MiniMaxH3ReferenceToVideo.execute(
+        clip=clip,
+        vae=vae,
+        prompt=prompt,
+        width=width,
+        height=height,
+        length=length,
+        ref_image_size="match",
+        ref_images=ref_images,
+    )
 
 
 class H3StructuredCanvas:
@@ -71,11 +126,11 @@ class H3StructuredCanvas:
             },
         }
 
-    RETURN_TYPES = ("H3_LAYOUT", "INT", "INT", "IMAGE", "IMAGE", "IMAGE")
-    RETURN_NAMES = ("layout", "width", "height", "A", "B", "C")
+    RETURN_TYPES = ("H3_LAYOUT", "INT", "INT")
+    RETURN_NAMES = ("layout", "width", "height")
     FUNCTION = "build"
     CATEGORY = CATEGORY
-    DESCRIPTION = "Draw normalized 0–1000 semantic BBOX layout. Optional A/B/C IMAGE inputs pass through for MiniMax H3 Reference to Video and bypass cleanly when disconnected."
+    DESCRIPTION = "Draw normalized 0–1000 semantic BBOX layout. Optional A/B/C IMAGE inputs travel inside the runtime layout and bypass cleanly when disconnected."
 
     def build(
         self,
@@ -87,7 +142,7 @@ class H3StructuredCanvas:
         A: Any = None,
         B: Any = None,
         C: Any = None,
-    ) -> tuple[dict[str, Any], int, int, Any, Any, Any]:
+    ) -> tuple[dict[str, Any], int, int]:
         layout, warnings = sanitize_layout(
             layout_json,
             width_override=width if width is not None else canvas_width,
@@ -102,7 +157,7 @@ class H3StructuredCanvas:
             layout = dict(layout)
             layout[_RUNTIME_SLOT_IMAGES] = slot_images
 
-        return layout, int(layout["canvas"]["width"]), int(layout["canvas"]["height"]), A, B, C
+        return layout, int(layout["canvas"]["width"]), int(layout["canvas"]["height"])
 
 
 class H3LayoutTransition:
@@ -172,14 +227,58 @@ class H3StructuredPrompter:
         return (prompt,)
 
 
+class H3StructuredReferenceToVideo:
+    """Turn a structured layout + prompt into native MiniMax H3 conditioning."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "clip": ("CLIP", {"forceInput": True}),
+                "vae": ("VAE", {"forceInput": True}),
+                "layout": ("H3_LAYOUT", {"forceInput": True}),
+                "prompt": ("STRING", {"forceInput": True}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "LATENT")
+    RETURN_NAMES = ("positive", "latent")
+    FUNCTION = "condition"
+    CATEGORY = CATEGORY
+    EXPERIMENTAL = True
+    DESCRIPTION = "Native MiniMax H3 Reference-to-Video conditioning for Structured Canvas. A/B/C images are read automatically from the layout; width, height and duration are taken from Canvas/Timeline."
+
+    def condition(self, clip: Any, vae: Any, layout: Any, prompt: str) -> Any:
+        semantic_layout, _warnings = sanitize_layout(_semantic_layout(layout))
+        width = int(semantic_layout["canvas"]["width"])
+        height = int(semantic_layout["canvas"]["height"])
+        length = _h3_frame_count(_semantic_layout(layout))
+        connected = _connected_slot_images(layout)
+        ref_images = {
+            f"ref_image_{ordinal}": image
+            for ordinal, (_slot, image) in enumerate(connected, start=1)
+        }
+        return _core_reference_to_video(
+            clip=clip,
+            vae=vae,
+            prompt=str(prompt),
+            width=width,
+            height=height,
+            length=length,
+            ref_images=ref_images,
+        )
+
+
 NODE_CLASS_MAPPINGS = {
     "H3StructuredCanvas": H3StructuredCanvas,
     "H3LayoutTransition": H3LayoutTransition,
     "H3StructuredPrompter": H3StructuredPrompter,
+    "H3StructuredReferenceToVideo": H3StructuredReferenceToVideo,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3StructuredCanvas": "🧭 H3 Structured Canvas",
     "H3LayoutTransition": "↔ H3 Layout Transition",
     "H3StructuredPrompter": "🧩 H3 Structured Prompter",
+    "H3StructuredReferenceToVideo": "🎬 H3 Structured Reference to Video",
 }
