@@ -30,6 +30,13 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(layout["transition"]["end_boxes"][0]["bbox_2d"], [700, 100, 900, 900])
         self.assertEqual(nodes.H3LayoutTransition.RETURN_NAMES, ("layout",))
 
+    def test_reference_binder_uses_runtime_reference_bundle(self):
+        inputs = nodes.H3ReferenceBinder.INPUT_TYPES()
+        self.assertEqual(inputs["optional"]["image"][0], "IMAGE")
+        self.assertEqual(inputs["optional"]["video"][0], "VIDEO")
+        self.assertEqual(inputs["optional"]["previous_references"][0], "H3_REFERENCE_BINDINGS")
+        self.assertEqual(nodes.H3ReferenceBinder.RETURN_NAMES, ("layout", "references"))
+
     def test_prompter_node_outputs_prompt_only(self):
         layout = {"canvas": {"width": 640, "height": 640}, "boxes": [{"slot": "a", "bbox": [100, 100, 900, 900]}]}
         config = schema.default_config()
@@ -39,9 +46,10 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(nodes.H3StructuredPrompter.RETURN_NAMES, ("prompt",))
         self.assertNotIn("end_layout", nodes.H3StructuredPrompter.INPUT_TYPES().get("optional", {}))
 
-    def test_node_mappings_include_transition(self):
+    def test_node_mappings_include_transition_and_reference_binder(self):
         self.assertIn("H3StructuredCanvas", nodes.NODE_CLASS_MAPPINGS)
         self.assertIn("H3LayoutTransition", nodes.NODE_CLASS_MAPPINGS)
+        self.assertIn("H3ReferenceBinder", nodes.NODE_CLASS_MAPPINGS)
         self.assertIn("H3StructuredPrompter", nodes.NODE_CLASS_MAPPINGS)
 
 
