@@ -79,7 +79,7 @@ class ReferenceAssignmentV1Tests(unittest.TestCase):
         self.assertEqual(second["reference_assignments"], start["reference_assignments"])
         self.assertIn("transition", second)
 
-    def test_compiler_exposes_metadata_without_changing_prompt_or_model_structure(self):
+    def test_compiler_exposes_legacy_metadata_without_changing_prompt_or_model_structure(self):
         base_layout = layout_with_subject()
         referenced_layout = copy.deepcopy(base_layout)
         referenced_layout["reference_assignments"] = [
@@ -97,20 +97,13 @@ class ReferenceAssignmentV1Tests(unittest.TestCase):
         self.assertNotIn("ref_person", prompt_refs)
         self.assertNotIn("ref_scene", prompt_refs)
 
-    def test_multikey_frontend_preserves_and_edits_reference_assignment_contract(self):
+    def test_multikey_frontend_no_longer_exposes_reference_assignment_ui(self):
         source = MULTIKEY_JS.read_text(encoding="utf-8")
-        for required in (
-            "MAX_REFERENCE_ASSIGNMENTS = 8",
-            "function sanitizeReferenceAssignments",
-            'reference_assignments: clone(controller.state?.reference_assignments ?? [])',
-            'controller.state.reference_assignments = sanitizeReferenceAssignments(raw.reference_assignments)',
-            'referenceTitle.textContent = "REFERENCE ASSIGNMENT"',
-            'addReference.textContent = "+ Reference"',
-            '["image", "video"]',
-            '["a", "b", "c", "scene"]',
-            '["identity", "appearance", "composition", "motion"]',
-        ):
-            self.assertIn(required, source)
+        self.assertNotIn("REFERENCE ASSIGNMENT", source)
+        self.assertNotIn("+ Reference", source)
+        self.assertNotIn("MAX_REFERENCE_ASSIGNMENTS", source)
+        self.assertNotIn("renderReferenceAssignments", source)
+        self.assertNotIn("reference_assignments:", source)
 
 
 if __name__ == "__main__":
