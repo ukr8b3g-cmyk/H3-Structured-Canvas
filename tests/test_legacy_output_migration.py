@@ -18,22 +18,23 @@ class LegacyOutputMigrationContractTests(unittest.TestCase):
         self.assertIn('publicOutput(width, "width", "INT"', SOURCE)
         self.assertIn('publicOutput(height, "height", "INT"', SOURCE)
 
-    def test_pre_slot_image_three_output_canvas_is_upgraded(self):
-        self.assertIn('function isPreSlotImageCanvas(outputs)', SOURCE)
-        self.assertIn('outputs.length === 3', SOURCE)
-        self.assertIn('migratePreSlotImageCanvasOutputs', SOURCE)
+    def test_interim_six_output_canvas_is_detected_and_reduced(self):
+        self.assertIn('function isInterimSlotImageCanvas(outputs)', SOURCE)
+        self.assertIn('outputs.length >= 6', SOURCE)
+        self.assertIn('outputs[3]?.type === "IMAGE"', SOURCE)
+        self.assertIn('migrateInterimSlotImageCanvasOutputs', SOURCE)
+        self.assertIn('remapOriginSlots(node, [3, 4, 5], {})', SOURCE)
 
-    def test_canvas_migration_adds_abc_image_outputs_without_shifting_existing_indices(self):
-        self.assertIn('publicOutput(null, "A", "IMAGE", [])', SOURCE)
-        self.assertIn('publicOutput(null, "B", "IMAGE", [])', SOURCE)
-        self.assertIn('publicOutput(null, "C", "IMAGE", [])', SOURCE)
+    def test_current_canvas_migration_keeps_only_layout_width_height(self):
+        self.assertIn('function currentCanvasOutputs(layout, width, height)', SOURCE)
+        self.assertNotIn('publicOutput(null, "A", "IMAGE", [])', SOURCE)
+        self.assertNotIn('publicOutput(null, "B", "IMAGE", [])', SOURCE)
+        self.assertNotIn('publicOutput(null, "C", "IMAGE", [])', SOURCE)
         layout_pos = SOURCE.index('publicOutput(layout, "layout", "H3_LAYOUT"')
         width_pos = SOURCE.index('publicOutput(width, "width", "INT"')
         height_pos = SOURCE.index('publicOutput(height, "height", "INT"')
-        a_pos = SOURCE.index('publicOutput(null, "A", "IMAGE", [])')
         self.assertLess(layout_pos, width_pos)
         self.assertLess(width_pos, height_pos)
-        self.assertLess(height_pos, a_pos)
 
     def test_legacy_debug_outputs_are_removed(self):
         self.assertIn('removeLink', SOURCE)
