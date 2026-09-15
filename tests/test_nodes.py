@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
 from _load_package import load_package
 
@@ -11,22 +12,17 @@ schema = __import__(f"{pkg.__name__}.schema", fromlist=["*"])
 
 
 class NodeTests(unittest.TestCase):
-    def test_canvas_outputs_layout_size_and_abc_images(self):
+    def test_canvas_outputs_layout_and_size_only(self):
         node = nodes.H3StructuredCanvas()
         layout_raw = {
             "canvas": {"width": 640, "height": 640},
             "boxes": [{"slot": "a", "bbox": [100, 100, 900, 900]}],
         }
-        layout, width, height, image_a, image_b, image_c = node.build(
-            640, 640, json.dumps(layout_raw), width=768, height=1344
-        )
+        layout, width, height = node.build(640, 640, json.dumps(layout_raw), width=768, height=1344)
         self.assertEqual((width, height), (768, 1344))
         self.assertEqual(layout["canvas"]["aspect_ratio"], "9:16")
-        self.assertEqual(nodes.H3StructuredCanvas.RETURN_NAMES, ("layout", "width", "height", "A", "B", "C"))
-        self.assertEqual(nodes.H3StructuredCanvas.RETURN_TYPES, ("H3_LAYOUT", "INT", "INT", "IMAGE", "IMAGE", "IMAGE"))
-        self.assertIsNone(image_a)
-        self.assertIsNone(image_b)
-        self.assertIsNone(image_c)
+        self.assertEqual(nodes.H3StructuredCanvas.RETURN_NAMES, ("layout", "width", "height"))
+        self.assertEqual(nodes.H3StructuredCanvas.RETURN_TYPES, ("H3_LAYOUT", "INT", "INT"))
         self.assertNotIn("_h3_slot_images", layout)
 
     def test_canvas_exposes_optional_abc_image_inputs(self):
@@ -37,21 +33,16 @@ class NodeTests(unittest.TestCase):
         self.assertNotIn("D", optional)
         self.assertNotIn("E", optional)
 
-    def test_canvas_images_pass_through_and_disconnected_inputs_bypass(self):
+    def test_canvas_images_stay_in_runtime_layout_and_disconnected_inputs_bypass(self):
         node = nodes.H3StructuredCanvas()
         layout_raw = {"canvas": {"width": 640, "height": 640}, "boxes": []}
         image_a = object()
         image_c = object()
-        layout, _width, _height, out_a, out_b, out_c = node.build(
-            640, 640, json.dumps(layout_raw), A=image_a, C=image_c
-        )
+        layout, _width, _height = node.build(640, 640, json.dumps(layout_raw), A=image_a, C=image_c)
         self.assertEqual(set(layout["_h3_slot_images"]), {"a", "c"})
         self.assertIs(layout["_h3_slot_images"]["a"], image_a)
         self.assertIs(layout["_h3_slot_images"]["c"], image_c)
         self.assertNotIn("b", layout["_h3_slot_images"])
-        self.assertIs(out_a, image_a)
-        self.assertIsNone(out_b)
-        self.assertIs(out_c, image_c)
 
         clean, _warnings = schema.sanitize_layout(nodes._semantic_layout(layout))
         self.assertNotIn("_h3_slot_images", clean)
@@ -129,10 +120,66 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(nodes.H3StructuredPrompter.RETURN_NAMES, ("prompt",))
         self.assertNotIn("end_layout", nodes.H3StructuredPrompter.INPUT_TYPES().get("optional", {}))
 
-    def test_node_mappings_exclude_reference_binder(self):
+    def test_structured_reference_node_has_minimal_native_contract(self):
+        inputs = nodes.H3StructuredReferenceToVideo.INPUT_TYPES()["required"]
+        self.assertEqual(inputs["clip"][0], "CLIP")
+        self.assertEqual(inputs["vae"][0], "VAE")
+        self.assertEqual(inputs["layout"][0], "H3_LAYOUT")
+        self.assertEqual(inputs["prompt"][0], "STRING")
+        self.assertEqual(nodes.H3StructuredReferenceToVideo.RETURN_NAMES, ("positive", "latent"))
+        self.assertEqual(nodes.H3StructuredReferenceToVideo.RETURN_TYPES, ("CONDITIONING", "LATENT"))
+
+    def test_structured_reference_node_compacts_abc_and_uses_canvas_timeline(self):
+        image_a = object()
+        image_c = object()
+        layout = {
+            "canvas": {"width": 736, "height": 416},
+            "boxes": [],
+            "timeline_experimental": {"duration_seconds": 10.0},
+            "_h3_slot_images": {"c": image_c, "a": image_a},
+        }
+        captured = {}
+
+        def fake_core(**kwargs):
+            captured.update(kwargs)
+            return ("positive", "latent")
+
+        with patch.object(nodes, "_core_reference_to_video", side_effect=fake_core):
+            result = nodes.H3StructuredReferenceToVideo().condition("clip", "vae", layout, "prompt")
+
+        self.assertEqual(result, ("positive", "latent"))
+        self.assertEqual(captured["width"], 736)
+        self.assertEqual(captured["height"], 416)
+        self.assertEqual(captured["length"], 243)
+        self.assertEqual(list(captured["ref_images"]), ["ref_image_1", "ref_image_2"])
+        self.assertIs(captured["ref_images"]["ref_image_1"], image_a)
+        self.assertIs(captured["ref_images"]["ref_image_2"], image_c)
+        self.assertEqual(captured["prompt"], "prompt")
+
+    def test_structured_reference_node_bypasses_images_cleanly(self):
+        layout = {"canvas": {"width": 640, "height": 640}, "boxes": []}
+        captured = {}
+
+        def fake_core(**kwargs):
+            captured.update(kwargs)
+            return ("positive", "latent")
+
+        with patch.object(nodes, "_core_reference_to_video", side_effect=fake_core):
+            nodes.H3StructuredReferenceToVideo().condition("clip", "vae", layout, "prompt")
+
+        self.assertEqual(captured["ref_images"], {})
+        self.assertEqual(captured["length"], 124)
+
+    def test_h3_frame_count_matches_model_grid(self):
+        self.assertEqual(nodes._h3_frame_count({"timeline_experimental": {"duration_seconds": 5}}), 124)
+        self.assertEqual(nodes._h3_frame_count({"timeline_experimental": {"duration_seconds": 10}}), 243)
+        self.assertEqual(nodes._h3_frame_count({"timeline_experimental": {"duration_seconds": 15}}), 362)
+
+    def test_node_mappings_include_final_reference_node_and_exclude_binder(self):
         self.assertIn("H3StructuredCanvas", nodes.NODE_CLASS_MAPPINGS)
         self.assertIn("H3LayoutTransition", nodes.NODE_CLASS_MAPPINGS)
         self.assertIn("H3StructuredPrompter", nodes.NODE_CLASS_MAPPINGS)
+        self.assertIn("H3StructuredReferenceToVideo", nodes.NODE_CLASS_MAPPINGS)
         self.assertNotIn("H3ReferenceBinder", nodes.NODE_CLASS_MAPPINGS)
 
 
