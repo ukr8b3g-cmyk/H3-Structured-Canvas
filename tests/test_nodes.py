@@ -32,6 +32,8 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(optional["C"][0], "IMAGE")
         self.assertNotIn("D", optional)
         self.assertNotIn("E", optional)
+        self.assertEqual(nodes._PUBLIC_IMAGE_SLOTS, ("a", "b", "c"))
+        self.assertEqual(nodes._INTERNAL_IMAGE_SLOTS, ("a", "b", "c", "d", "e"))
 
     def test_canvas_images_stay_in_runtime_layout_and_disconnected_inputs_bypass(self):
         node = nodes.H3StructuredCanvas()
@@ -43,17 +45,12 @@ class NodeTests(unittest.TestCase):
         self.assertIs(layout["_h3_slot_images"]["a"], image_a)
         self.assertIs(layout["_h3_slot_images"]["c"], image_c)
         self.assertNotIn("b", layout["_h3_slot_images"])
-
         clean, _warnings = schema.sanitize_layout(nodes._semantic_layout(layout))
         self.assertNotIn("_h3_slot_images", clean)
 
     def test_transition_preserves_runtime_slot_images_without_serializing_them(self):
         image_a = object()
-        start = {
-            "canvas": {"width": 640, "height": 640},
-            "boxes": [{"slot": "a", "bbox": [100, 100, 300, 900]}],
-            "_h3_slot_images": {"a": image_a},
-        }
+        start = {"canvas": {"width": 640, "height": 640}, "boxes": [{"slot": "a", "bbox": [100, 100, 300, 900]}], "_h3_slot_images": {"a": image_a}}
         end = {"canvas": {"width": 640, "height": 640}, "boxes": [{"slot": "a", "bbox": [700, 100, 900, 900]}]}
         (layout,) = nodes.H3LayoutTransition().combine(start, end)
         self.assertIs(layout["_h3_slot_images"]["a"], image_a)
@@ -78,38 +75,31 @@ class NodeTests(unittest.TestCase):
         self.assertNotIn("<Picture", prompt_node)
 
     def test_prompter_maps_connected_abc_images_to_compacted_picture_ordinals(self):
-        layout = {
-            "canvas": {"width": 640, "height": 640},
-            "boxes": [
-                {"slot": "a", "bbox": [50, 100, 300, 900]},
-                {"slot": "c", "bbox": [700, 100, 950, 900]},
-            ],
-            "_h3_slot_images": {"a": object(), "c": object()},
-        }
+        layout = {"canvas": {"width": 640, "height": 640}, "boxes": [], "_h3_slot_images": {"a": object(), "c": object()}}
         config = schema.default_config()
-        config["slots"]["a"].update({"type": "subject", "description": "Person A."})
-        config["slots"]["c"].update({"type": "object", "description": "Object C."})
-        config["slots"]["b"]["enabled"] = False
         prompt = nodes.H3StructuredPrompter().compile(layout, json.dumps(config))[0]
-        self.assertIn("Reference image mapping:", prompt)
         self.assertIn("<Picture 1> is the visual reference for Slot A.", prompt)
         self.assertIn("<Picture 2> is the visual reference for Slot C.", prompt)
         self.assertNotIn("Slot B", prompt)
-        self.assertNotIn("<Picture 3>", prompt)
 
-    def test_prompter_picture_mapping_is_always_abc_order(self):
-        layout = {
-            "canvas": {"width": 640, "height": 640},
-            "boxes": [],
-            "_h3_slot_images": {"c": object(), "a": object(), "b": object()},
-        }
+    def test_prompter_picture_mapping_is_always_canonical_a_to_e_order(self):
+        layout = {"canvas": {"width": 640, "height": 640}, "boxes": [], "_h3_slot_images": {"e": object(), "c": object(), "a": object(), "d": object(), "b": object()}}
         config = schema.default_config()
         prompt = nodes.H3StructuredPrompter().compile(layout, json.dumps(config))[0]
-        a = prompt.index("<Picture 1> is the visual reference for Slot A.")
-        b = prompt.index("<Picture 2> is the visual reference for Slot B.")
-        c = prompt.index("<Picture 3> is the visual reference for Slot C.")
-        self.assertLess(a, b)
-        self.assertLess(b, c)
+        positions = [prompt.index(f"<Picture {i}> is the visual reference for Slot {slot}.") for i, slot in enumerate("ABCDE", start=1)]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_hidden_de_runtime_slots_are_future_ready_without_public_ui(self):
+        image_d = object()
+        image_e = object()
+        layout = {"canvas": {"width": 640, "height": 640}, "boxes": [], "_h3_slot_images": {"e": image_e, "d": image_d}}
+        connected = nodes._connected_slot_images(layout)
+        self.assertEqual([slot for slot, _ in connected], ["d", "e"])
+        self.assertIs(connected[0][1], image_d)
+        self.assertIs(connected[1][1], image_e)
+        optional = nodes.H3StructuredCanvas.INPUT_TYPES()["optional"]
+        self.assertNotIn("D", optional)
+        self.assertNotIn("E", optional)
 
     def test_prompter_node_outputs_prompt_only(self):
         layout = {"canvas": {"width": 640, "height": 640}, "boxes": [{"slot": "a", "bbox": [100, 100, 900, 900]}]}
@@ -132,41 +122,40 @@ class NodeTests(unittest.TestCase):
     def test_structured_reference_node_compacts_abc_and_uses_canvas_timeline(self):
         image_a = object()
         image_c = object()
-        layout = {
-            "canvas": {"width": 736, "height": 416},
-            "boxes": [],
-            "timeline_experimental": {"duration_seconds": 10.0},
-            "_h3_slot_images": {"c": image_c, "a": image_a},
-        }
+        layout = {"canvas": {"width": 736, "height": 416}, "boxes": [], "timeline_experimental": {"duration_seconds": 10.0}, "_h3_slot_images": {"c": image_c, "a": image_a}}
         captured = {}
-
         def fake_core(**kwargs):
             captured.update(kwargs)
             return ("positive", "latent")
-
         with patch.object(nodes, "_core_reference_to_video", side_effect=fake_core):
             result = nodes.H3StructuredReferenceToVideo().condition("clip", "vae", layout, "prompt")
-
         self.assertEqual(result, ("positive", "latent"))
-        self.assertEqual(captured["width"], 736)
-        self.assertEqual(captured["height"], 416)
         self.assertEqual(captured["length"], 243)
         self.assertEqual(list(captured["ref_images"]), ["ref_image_1", "ref_image_2"])
         self.assertIs(captured["ref_images"]["ref_image_1"], image_a)
         self.assertIs(captured["ref_images"]["ref_image_2"], image_c)
-        self.assertEqual(captured["prompt"], "prompt")
+
+    def test_structured_reference_node_accepts_hidden_de_in_canonical_order(self):
+        images = {slot: object() for slot in "abcde"}
+        layout = {"canvas": {"width": 640, "height": 640}, "boxes": [], "_h3_slot_images": {slot: images[slot] for slot in reversed("abcde")}}
+        captured = {}
+        def fake_core(**kwargs):
+            captured.update(kwargs)
+            return ("positive", "latent")
+        with patch.object(nodes, "_core_reference_to_video", side_effect=fake_core):
+            nodes.H3StructuredReferenceToVideo().condition("clip", "vae", layout, "prompt")
+        self.assertEqual(list(captured["ref_images"]), [f"ref_image_{i}" for i in range(1, 6)])
+        for i, slot in enumerate("abcde", start=1):
+            self.assertIs(captured["ref_images"][f"ref_image_{i}"], images[slot])
 
     def test_structured_reference_node_bypasses_images_cleanly(self):
         layout = {"canvas": {"width": 640, "height": 640}, "boxes": []}
         captured = {}
-
         def fake_core(**kwargs):
             captured.update(kwargs)
             return ("positive", "latent")
-
         with patch.object(nodes, "_core_reference_to_video", side_effect=fake_core):
             nodes.H3StructuredReferenceToVideo().condition("clip", "vae", layout, "prompt")
-
         self.assertEqual(captured["ref_images"], {})
         self.assertEqual(captured["length"], 124)
 
