@@ -1197,7 +1197,6 @@ function repairMultiKeyUI(controller) {
   }
   if (expectedMarkerSignature(controller) !== renderedMarkerSignature(ui)) renderMarkers(controller);
   else syncMarkerSelection(controller);
-  renderReferenceAssignments(controller);
 }
 
 function restoreInstalled(node, raw = null) {
