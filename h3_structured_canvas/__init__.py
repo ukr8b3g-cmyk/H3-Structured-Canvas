@@ -20,6 +20,12 @@ from .multikey_patch import install_multikey_fixes
 
 install_multikey_fixes(_schema, _compiler)
 
+# Reference Assignment V1 is metadata-only: it sanitizes assignment metadata and
+# exposes it in structured output without changing prompt/model semantics.
+from .reference_assignment import install_reference_assignment_fixes
+
+install_reference_assignment_fixes(_schema, _compiler)
+
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 from .schema import PACKAGE_VERSION
 
