@@ -88,6 +88,24 @@ function canvasOutputs(layout, width, height) {
   ];
 }
 
+function stabilizeDomWidgetSize(node, nodeName) {
+  const target = nodeName === CANVAS_NODE ? [760, 900] : [650, 880];
+  const widget = node?.__h3scDomWidget;
+  if (widget) {
+    // Never derive widget height from node.size: that creates a positive
+    // feedback loop where widget growth increases node height repeatedly.
+    widget.computeSize = (width) => [width, Math.max(300, target[1] - 105)];
+  }
+
+  const current = node?.size;
+  if (Array.isArray(current) && Number(current[1]) > target[1] * 1.5) {
+    node.setSize?.([
+      Math.max(Number(current[0]) || target[0], target[0]),
+      target[1],
+    ]);
+  }
+}
+
 function migrateLegacyCanvasOutputs(node) {
   const outputs = node?.outputs;
   if (!isLegacyCanvas(outputs)) return false;
@@ -142,7 +160,10 @@ function migrateLegacyOutputs(node, nodeName) {
 }
 
 function scheduleMigration(node, nodeName) {
-  const run = () => migrateLegacyOutputs(node, nodeName);
+  const run = () => {
+    stabilizeDomWidgetSize(node, nodeName);
+    migrateLegacyOutputs(node, nodeName);
+  };
   queueMicrotask(run);
   setTimeout(run, 0);
   setTimeout(run, 100);
@@ -180,6 +201,7 @@ if (app?.registerExtension) {
       nodeType.prototype.onSerialize = function () {
         // Ensure a legacy graph is migrated before the next save/queue, but do
         // not write live output slot objects into the serialized workflow.
+        stabilizeDomWidgetSize(this, nodeData.name);
         migrateLegacyOutputs(this, nodeData.name);
         oldSerialize?.apply(this, arguments);
       };
