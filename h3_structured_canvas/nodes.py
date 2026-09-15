@@ -6,6 +6,7 @@ import copy
 from typing import Any
 
 from .compiler import compile_h3_prompt
+from .reference_binding import bind_reference
 from .schema import DEFAULT_CONFIG_JSON, DEFAULT_LAYOUT_JSON, sanitize_layout
 
 CATEGORY = "MiniMax H3/Structured Prompt"
@@ -80,6 +81,48 @@ class H3LayoutTransition:
         return (result,)
 
 
+class H3ReferenceBinder:
+    """Bind runtime IMAGE/VIDEO media to one declared Reference Assignment id."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "layout": ("H3_LAYOUT", {"forceInput": True}),
+                "reference_id": ("STRING", {"default": "ref_1", "dynamicPrompts": False}),
+            },
+            "optional": {
+                "previous_references": ("H3_REFERENCE_BINDINGS", {"forceInput": True}),
+                "image": ("IMAGE", {"forceInput": True}),
+                "video": ("VIDEO", {"forceInput": True}),
+            },
+        }
+
+    RETURN_TYPES = ("H3_LAYOUT", "H3_REFERENCE_BINDINGS")
+    RETURN_NAMES = ("layout", "references")
+    FUNCTION = "bind"
+    CATEGORY = CATEGORY
+    EXPERIMENTAL = True
+    DESCRIPTION = "Bind one IMAGE or VIDEO payload to a Reference Assignment id. Chain nodes for multiple references."
+
+    def bind(
+        self,
+        layout: Any,
+        reference_id: str,
+        previous_references: Any = None,
+        image: Any = None,
+        video: Any = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return bind_reference(
+            layout,
+            reference_id,
+            sanitize_layout=sanitize_layout,
+            previous_references=previous_references,
+            image=image,
+            video=video,
+        )
+
+
 class H3StructuredPrompter:
     """Compile Canvas layout and semantic element data into an H3 prompt."""
 
@@ -106,11 +149,13 @@ class H3StructuredPrompter:
 NODE_CLASS_MAPPINGS = {
     "H3StructuredCanvas": H3StructuredCanvas,
     "H3LayoutTransition": H3LayoutTransition,
+    "H3ReferenceBinder": H3ReferenceBinder,
     "H3StructuredPrompter": H3StructuredPrompter,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3StructuredCanvas": "🧭 H3 Structured Canvas",
     "H3LayoutTransition": "↔ H3 Layout Transition",
+    "H3ReferenceBinder": "🔗 H3 Reference Binder",
     "H3StructuredPrompter": "🧩 H3 Structured Prompter",
 }
