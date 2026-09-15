@@ -14,6 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "PACKAGE_MANIFEST.sha256"
 TEXT_SUFFIXES = {".py", ".js", ".mjs", ".ts", ".json", ".md", ".toml", ".txt", ".sha256"}
 TEXT_NAMES = {".gitattributes", ".gitignore"}
+HASH_PROBE = (
+    "h3_structured_canvas/__init__.py",
+    "h3_structured_canvas/reference_assignment.py",
+    "tests/test_reference_assignment.py",
+    "web/zzzzzzz_h3sc_multikey_timeline.js",
+)
 
 
 def canonical_bytes(path: Path) -> bytes:
@@ -24,6 +30,10 @@ def canonical_bytes(path: Path) -> bytes:
 
 
 def main() -> int:
+    for relative in HASH_PROBE:
+        path = ROOT / relative
+        print(f"HASH {hashlib.sha256(canonical_bytes(path)).hexdigest()}  {relative}")
+
     failures: list[str] = []
     checked = 0
     for line in MANIFEST.read_text(encoding="utf-8").splitlines():
