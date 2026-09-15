@@ -3,7 +3,7 @@ const app = appModule?.app ?? appModule;
 
 const CANVAS_NODE = "H3StructuredCanvas";
 const PROMPTER_NODE = "H3StructuredPrompter";
-const EXTENSION_NAME = "h3.structured.canvas.legacy_output_migration.v3";
+const EXTENSION_NAME = "h3.structured.canvas.legacy_output_migration.v4";
 
 function graphLink(id) {
   const links = app?.graph?.links;
@@ -35,12 +35,15 @@ function isLegacyCanvas(outputs) {
     && outputs[3]?.type === "INT";
 }
 
-function isPreSlotImageCanvas(outputs) {
+function isInterimSlotImageCanvas(outputs) {
   return Array.isArray(outputs)
-    && outputs.length === 3
+    && outputs.length >= 6
     && outputs[0]?.type === "H3_LAYOUT"
     && outputs[1]?.type === "INT"
-    && outputs[2]?.type === "INT";
+    && outputs[2]?.type === "INT"
+    && outputs[3]?.type === "IMAGE"
+    && outputs[4]?.type === "IMAGE"
+    && outputs[5]?.type === "IMAGE";
 }
 
 function isLegacyPrompter(outputs) {
@@ -77,14 +80,11 @@ function publicOutput(output, name, type, links) {
   };
 }
 
-function canvasOutputs(layout, width, height) {
+function currentCanvasOutputs(layout, width, height) {
   return [
     publicOutput(layout, "layout", "H3_LAYOUT", outputLinks(layout)),
     publicOutput(width, "width", "INT", outputLinks(width)),
     publicOutput(height, "height", "INT", outputLinks(height)),
-    publicOutput(null, "A", "IMAGE", []),
-    publicOutput(null, "B", "IMAGE", []),
-    publicOutput(null, "C", "IMAGE", []),
   ];
 }
 
@@ -113,20 +113,21 @@ function migrateLegacyCanvasOutputs(node) {
 
   const [layout, legacyJson, width, height] = outputs;
   remapOriginSlots(node, [1], { 2: 1, 3: 2 });
-  node.outputs = canvasOutputs(layout, width, height);
+  node.outputs = currentCanvasOutputs(layout, width, height);
   node.setDirtyCanvas?.(true, true);
   app?.graph?.setDirtyCanvas?.(true, true);
   app?.graph?.change?.();
   return true;
 }
 
-function migratePreSlotImageCanvasOutputs(node) {
+function migrateInterimSlotImageCanvasOutputs(node) {
   const outputs = node?.outputs;
-  if (!isPreSlotImageCanvas(outputs)) return false;
+  if (!isInterimSlotImageCanvas(outputs)) return false;
   if (!allLinksReady(outputs)) return false;
 
   const [layout, width, height] = outputs;
-  node.outputs = canvasOutputs(layout, width, height);
+  remapOriginSlots(node, [3, 4, 5], {});
+  node.outputs = currentCanvasOutputs(layout, width, height);
   node.setDirtyCanvas?.(true, true);
   app?.graph?.setDirtyCanvas?.(true, true);
   app?.graph?.change?.();
@@ -150,7 +151,7 @@ function migrateLegacyPrompterOutputs(node) {
 }
 
 function migrateCanvasOutputs(node) {
-  return migrateLegacyCanvasOutputs(node) || migratePreSlotImageCanvasOutputs(node);
+  return migrateLegacyCanvasOutputs(node) || migrateInterimSlotImageCanvasOutputs(node);
 }
 
 function migrateLegacyOutputs(node, nodeName) {
@@ -176,8 +177,8 @@ if (app?.registerExtension) {
     name: EXTENSION_NAME,
     beforeRegisterNodeDef(nodeType, nodeData) {
       if (![CANVAS_NODE, PROMPTER_NODE].includes(nodeData.name)) return;
-      if (nodeType.prototype.__h3scLegacyOutputsV3) return;
-      nodeType.prototype.__h3scLegacyOutputsV3 = true;
+      if (nodeType.prototype.__h3scLegacyOutputsV4) return;
+      nodeType.prototype.__h3scLegacyOutputsV4 = true;
 
       const oldCreated = nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated = function () {
@@ -199,8 +200,8 @@ if (app?.registerExtension) {
 
       const oldSerialize = nodeType.prototype.onSerialize;
       nodeType.prototype.onSerialize = function () {
-        // Ensure a legacy graph is migrated before the next save/queue, but do
-        // not write live output slot objects into the serialized workflow.
+        // Ensure a legacy/interim graph is migrated before the next save/queue,
+        // but do not write live output slot objects into the serialized workflow.
         stabilizeDomWidgetSize(this, nodeData.name);
         migrateLegacyOutputs(this, nodeData.name);
         oldSerialize?.apply(this, arguments);
