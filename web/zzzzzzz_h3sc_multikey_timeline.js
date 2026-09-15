@@ -11,6 +11,11 @@ const DURATION_MAX = 15.0;
 const DURATION_STEP = 0.5;
 const MAX_INTERMEDIATE_KEYS = 7;
 const MIN_KEY_GAP_SECONDS = 0.05;
+const MAX_REFERENCE_ASSIGNMENTS = 8;
+const REFERENCE_KINDS = ["image", "video"];
+const REFERENCE_TARGETS = ["a", "b", "c", "scene"];
+const REFERENCE_ROLES = ["identity", "appearance", "composition", "motion"];
+const REFERENCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const EPS = 0.0005;
 const INTERNAL_MIN = -1000;
 const INTERNAL_MAX = 2000;
@@ -28,6 +33,35 @@ function parseObject(value) {
   } catch {
     return {};
   }
+}
+
+function sanitizeReferenceAssignments(value) {
+  const source = Array.isArray(value) ? value : [];
+  const result = [];
+  const seen = new Set();
+  for (const item of source) {
+    if (result.length >= MAX_REFERENCE_ASSIGNMENTS) break;
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const id = String(item.id ?? "").trim();
+    const kind = String(item.kind ?? "").trim().toLowerCase();
+    const target = String(item.target ?? "").trim().toLowerCase();
+    const role = String(item.role ?? "").trim().toLowerCase();
+    const folded = id.toLowerCase();
+    if (!REFERENCE_ID_PATTERN.test(id) || seen.has(folded)) continue;
+    if (!REFERENCE_KINDS.includes(kind) || !REFERENCE_TARGETS.includes(target) || !REFERENCE_ROLES.includes(role)) continue;
+    seen.add(folded);
+    result.push({ id, kind, target, role });
+  }
+  return result;
+}
+
+function nextReferenceId(assignments) {
+  const used = new Set((assignments ?? []).map((item) => String(item?.id ?? "").toLowerCase()));
+  for (let index = 1; index <= 99; index += 1) {
+    const candidate = `ref_${index}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `ref_${Date.now()}`;
 }
 
 function normalizeDuration(value) {
@@ -186,6 +220,7 @@ function upgradeState(controller, rawValue) {
     exp.tracks[slot] ??= { start: null, mid: null, end: null, midExplicit: false, keys: [] };
     importKeys(exp.tracks[slot], timeline, slot, exp.duration);
   }
+  controller.state.reference_assignments = sanitizeReferenceAssignments(raw.reference_assignments);
 }
 
 function serializeLayout(controller) {
@@ -222,10 +257,12 @@ function serializeLayout(controller) {
     if (track?.end) ends.push(cloneBox(track.end));
   }
 
+  controller.state.reference_assignments = sanitizeReferenceAssignments(controller.state?.reference_assignments);
   return {
     schema: current.schema ?? controller.state?.schema ?? "h3_structured_canvas/0.9",
     canvas,
     boxes: starts,
+    reference_assignments: clone(controller.state?.reference_assignments ?? []),
     transition: { end_canvas: clone(canvas), end_boxes: ends },
     timeline_experimental: {
       version: 4,
@@ -303,6 +340,33 @@ function saveState(controller) {
   controller.node?.setDirtyCanvas?.(true, true);
   app?.graph?.setDirtyCanvas?.(true, true);
   refreshAll(controller, true);
+}
+
+function addReferenceAssignment(controller) {
+  const assignments = sanitizeReferenceAssignments(controller.state?.reference_assignments);
+  if (assignments.length >= MAX_REFERENCE_ASSIGNMENTS) return;
+  assignments.push({ id: nextReferenceId(assignments), kind: "image", target: "a", role: "identity" });
+  controller.state.reference_assignments = assignments;
+  saveState(controller);
+  renderReferenceAssignments(controller);
+}
+
+function updateReferenceAssignment(controller, index, key, value) {
+  const assignments = sanitizeReferenceAssignments(controller.state?.reference_assignments);
+  if (!assignments[index]) return;
+  assignments[index] = { ...assignments[index], [key]: value };
+  controller.state.reference_assignments = sanitizeReferenceAssignments(assignments);
+  saveState(controller);
+  renderReferenceAssignments(controller);
+}
+
+function deleteReferenceAssignment(controller, index) {
+  const assignments = sanitizeReferenceAssignments(controller.state?.reference_assignments);
+  if (!assignments[index]) return;
+  assignments.splice(index, 1);
+  controller.state.reference_assignments = assignments;
+  saveState(controller);
+  renderReferenceAssignments(controller);
 }
 
 function setPlayhead(controller, value) {
@@ -434,8 +498,78 @@ function ensureStyles() {
 .h3sc-mk-note{font-size:10px;color:#8f9697}
 .h3sc-mk-note.warn{color:#e4b548}
 .h3sc-mk-count{margin-left:auto;font:10px/1 ui-monospace,Consolas,monospace;color:#8f9697}
+.h3sc-ref-details{border-top:1px solid #303435;padding-top:6px}.h3sc-ref-details>summary{cursor:pointer;color:#48d5cf;font-size:10.5px;font-weight:800;user-select:none}.h3sc-ref-head{display:flex;align-items:center;gap:7px;margin:7px 0}.h3sc-ref-list{display:flex;flex-direction:column;gap:6px}.h3sc-ref-row{display:grid;grid-template-columns:minmax(90px,1.15fr) minmax(78px,.75fr) minmax(78px,.75fr) minmax(105px,1fr) auto;gap:6px;align-items:end}.h3sc-ref-field{display:flex;flex-direction:column;gap:2px;min-width:0}.h3sc-ref-label{font-size:9px;color:#9ba1a2}.h3sc-ref-input,.h3sc-ref-select{width:100%;min-width:0;height:27px;background:#101213;color:#eee;border:1px solid #4b4f50;border-radius:5px;padding:3px 5px}.h3sc-ref-empty{font-size:10px;color:#8f9697;padding:3px 0}.h3sc-ref-meta{font-size:9.5px;color:#8f9697;line-height:1.35}@media(max-width:760px){.h3sc-ref-row{grid-template-columns:1fr 1fr}.h3sc-ref-row .h3sc-ref-delete{grid-column:span 2}}
 `;
   document.head.append(style);
+}
+
+function renderReferenceAssignments(controller, ui = controller.__h3scMultiUI) {
+  if (!ui?.referenceBody || !ui?.referenceCount || !ui?.addReference) return;
+  const assignments = sanitizeReferenceAssignments(controller.state?.reference_assignments);
+  controller.state.reference_assignments = assignments;
+  ui.referenceBody.replaceChildren();
+  ui.referenceCount.textContent = `${assignments.length}/${MAX_REFERENCE_ASSIGNMENTS}`;
+  ui.addReference.disabled = assignments.length >= MAX_REFERENCE_ASSIGNMENTS;
+  if (!assignments.length) {
+    const empty = document.createElement("div");
+    empty.className = "h3sc-ref-empty";
+    empty.textContent = "No reference assignments. Metadata only; media sockets are not connected in V1.";
+    ui.referenceBody.append(empty);
+    return;
+  }
+
+  assignments.forEach((assignment, index) => {
+    const row = document.createElement("div");
+    row.className = "h3sc-ref-row";
+
+    const makeField = (labelText, control) => {
+      const field = document.createElement("label");
+      field.className = "h3sc-ref-field";
+      const label = document.createElement("span");
+      label.className = "h3sc-ref-label";
+      label.textContent = labelText;
+      field.append(label, control);
+      return field;
+    };
+
+    const id = document.createElement("input");
+    id.className = "h3sc-ref-input";
+    id.value = assignment.id;
+    id.maxLength = 64;
+    id.pattern = "[A-Za-z0-9][A-Za-z0-9_.-]{0,63}";
+    id.onchange = () => updateReferenceAssignment(controller, index, "id", id.value.trim());
+
+    const selectFor = (values, selected, key) => {
+      const select = document.createElement("select");
+      select.className = "h3sc-ref-select";
+      for (const value of values) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value === "scene" ? "Scene" : value.length === 1 ? value.toUpperCase() : value[0].toUpperCase() + value.slice(1);
+        select.append(option);
+      }
+      select.value = selected;
+      select.onchange = () => updateReferenceAssignment(controller, index, key, select.value);
+      return select;
+    };
+
+    const kind = selectFor(REFERENCE_KINDS, assignment.kind, "kind");
+    const target = selectFor(REFERENCE_TARGETS, assignment.target, "target");
+    const role = selectFor(REFERENCE_ROLES, assignment.role, "role");
+    const remove = document.createElement("button");
+    remove.className = "h3sc-btn danger h3sc-ref-delete";
+    remove.textContent = "Delete";
+    remove.onclick = () => deleteReferenceAssignment(controller, index);
+
+    row.append(
+      makeField("ID", id),
+      makeField("Kind", kind),
+      makeField("Target", target),
+      makeField("Role", role),
+      remove,
+    );
+    ui.referenceBody.append(row);
+  });
 }
 
 function buildUI(controller) {
@@ -530,9 +664,34 @@ function buildUI(controller) {
 
   const note = document.createElement("div");
   note.className = "h3sc-mk-note";
-  section.append(head, row, keys, note);
+
+  const referenceDetails = document.createElement("details");
+  referenceDetails.className = "h3sc-ref-details";
+  const referenceSummary = document.createElement("summary");
+  const referenceTitle = document.createElement("span");
+  referenceTitle.textContent = "REFERENCE ASSIGNMENT";
+  referenceSummary.append(referenceTitle);
+  const referenceHead = document.createElement("div");
+  referenceHead.className = "h3sc-ref-head";
+  const referenceMeta = document.createElement("span");
+  referenceMeta.className = "h3sc-ref-meta";
+  referenceMeta.textContent = "V1 stores deterministic metadata only. Reference media sockets are added in a later phase.";
+  const referenceCount = document.createElement("span");
+  referenceCount.className = "h3sc-mk-count";
+  const addReference = document.createElement("button");
+  addReference.className = "h3sc-btn";
+  addReference.textContent = "+ Reference";
+  addReference.onclick = () => addReferenceAssignment(controller);
+  referenceHead.append(referenceMeta, referenceCount, addReference);
+  const referenceBody = document.createElement("div");
+  referenceBody.className = "h3sc-ref-list";
+  referenceDetails.append(referenceSummary, referenceHead, referenceBody);
+
+  section.append(head, row, keys, note, referenceDetails);
+  const ui = { section, play, time, current, range, layer, duration, add, del, prev, next, count, state, note, wrap, referenceBody, referenceCount, addReference };
+  renderReferenceAssignments(controller, ui);
   monitor.after(section);
-  return { section, play, time, current, range, layer, duration, add, del, prev, next, count, state, note, wrap };
+  return ui;
 }
 
 function syncMarkerSelection(controller) {
@@ -1038,6 +1197,7 @@ function repairMultiKeyUI(controller) {
   }
   if (expectedMarkerSignature(controller) !== renderedMarkerSignature(ui)) renderMarkers(controller);
   else syncMarkerSelection(controller);
+  renderReferenceAssignments(controller);
 }
 
 function restoreInstalled(node, raw = null) {
