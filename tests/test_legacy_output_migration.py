@@ -51,6 +51,11 @@ class LegacyOutputMigrationContractTests(unittest.TestCase):
         self.assertNotIn('{ ...output', SOURCE)
         self.assertIn('internal references such as `_node`', SOURCE)
 
+    def test_dom_widget_height_does_not_self_reference_node_size(self):
+        self.assertIn('function stabilizeDomWidgetSize', SOURCE)
+        self.assertIn('widget.computeSize = (width) => [width, Math.max(300, target[1] - 105)]', SOURCE)
+        self.assertIn('Number(current[1]) > target[1] * 1.5', SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()
