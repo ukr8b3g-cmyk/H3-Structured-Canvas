@@ -11,7 +11,8 @@ from .schema import DEFAULT_CONFIG_JSON, DEFAULT_LAYOUT_JSON, sanitize_layout
 
 CATEGORY = "MiniMax H3/Structured Prompt"
 _RUNTIME_SLOT_IMAGES = "_h3_slot_images"
-_VISIBLE_IMAGE_SLOTS = ("a", "b", "c")
+_PUBLIC_IMAGE_SLOTS = ("a", "b", "c")
+_INTERNAL_IMAGE_SLOTS = ("a", "b", "c", "d", "e")
 _H3_FPS = 24
 
 
@@ -34,16 +35,22 @@ def _runtime_slot_images(layout: Any) -> dict[str, Any]:
 
 
 def _connected_slot_images(layout: Any) -> list[tuple[str, Any]]:
+    """Return connected slot images in canonical A-E order.
+
+    A/B/C are the V1 public Canvas sockets. D/E intentionally remain hidden,
+    but the runtime contract already understands them so a future UI reveal
+    does not require changing Picture numbering or the downstream node.
+    """
     images = _runtime_slot_images(layout)
-    return [(slot, images[slot]) for slot in _VISIBLE_IMAGE_SLOTS if images.get(slot) is not None]
+    return [(slot, images[slot]) for slot in _INTERNAL_IMAGE_SLOTS if images.get(slot) is not None]
 
 
 def _picture_mapping_suffix(layout: Any) -> str:
-    """Build deterministic <Picture n> mapping for connected A/B/C images.
+    """Build deterministic <Picture n> mapping for connected slot images.
 
     MiniMax H3 Reference to Video numbers only connected reference images in
-    input order. Mirror that compaction here so A/C becomes Picture 1/2 when B
-    is disconnected.
+    input order. Mirror that compaction here. Public V1 is A/B/C; hidden D/E
+    use the same canonical mapping if they are supplied by a future frontend.
     """
     connected = _connected_slot_images(layout)
     if not connected:
@@ -107,7 +114,7 @@ def _core_reference_to_video(
 
 
 class H3StructuredCanvas:
-    """Interactive 0..1000 BBOX canvas with optional A/B/C IMAGE inputs."""
+    """Interactive 0..1000 BBOX canvas with optional public A/B/C IMAGE inputs."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -130,7 +137,7 @@ class H3StructuredCanvas:
     RETURN_NAMES = ("layout", "width", "height")
     FUNCTION = "build"
     CATEGORY = CATEGORY
-    DESCRIPTION = "Draw normalized 0–1000 semantic BBOX layout. Optional A/B/C IMAGE inputs travel inside the runtime layout and bypass cleanly when disconnected."
+    DESCRIPTION = "Draw normalized 0–1000 semantic BBOX layout. Optional A/B/C IMAGE inputs travel inside the runtime layout and bypass cleanly when disconnected. D/E remain reserved internally."
 
     def build(
         self,
@@ -152,7 +159,12 @@ class H3StructuredCanvas:
             layout = dict(layout)
             layout["warnings"] = warnings
 
-        slot_images = {slot: image for slot, image in (("a", A), ("b", B), ("c", C)) if image is not None}
+        public_images = (A, B, C)
+        slot_images = {
+            slot: image
+            for slot, image in zip(_PUBLIC_IMAGE_SLOTS, public_images)
+            if image is not None
+        }
         if slot_images:
             layout = dict(layout)
             layout[_RUNTIME_SLOT_IMAGES] = slot_images
@@ -217,7 +229,7 @@ class H3StructuredPrompter:
     RETURN_NAMES = ("prompt",)
     FUNCTION = "compile"
     CATEGORY = CATEGORY
-    DESCRIPTION = "Compile normalized BBOX layout, semantic elements, motion presets and camera instructions into a MiniMax H3 prompt. Connected Canvas A/B/C images are mapped automatically to <Picture n>."
+    DESCRIPTION = "Compile normalized BBOX layout, semantic elements, motion presets and camera instructions into a MiniMax H3 prompt. Connected Canvas images are mapped automatically to <Picture n>."
 
     def compile(self, layout: Any, config_json: str) -> tuple[str]:
         prompt, _structure, _debug = compile_h3_prompt(_semantic_layout(layout), config_json)
@@ -246,7 +258,7 @@ class H3StructuredReferenceToVideo:
     FUNCTION = "condition"
     CATEGORY = CATEGORY
     EXPERIMENTAL = True
-    DESCRIPTION = "Native MiniMax H3 Reference-to-Video conditioning for Structured Canvas. A/B/C images are read automatically from the layout; width, height and duration are taken from Canvas/Timeline."
+    DESCRIPTION = "Native MiniMax H3 Reference-to-Video conditioning for Structured Canvas. Public A/B/C and reserved D/E runtime images are mapped automatically; width, height and duration come from Canvas/Timeline."
 
     def condition(self, clip: Any, vae: Any, layout: Any, prompt: str) -> Any:
         semantic_layout, _warnings = sanitize_layout(_semantic_layout(layout))
