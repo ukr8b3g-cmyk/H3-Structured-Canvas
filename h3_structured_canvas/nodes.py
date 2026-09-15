@@ -10,13 +10,14 @@ from .schema import DEFAULT_CONFIG_JSON, DEFAULT_LAYOUT_JSON, sanitize_layout
 
 CATEGORY = "MiniMax H3/Structured Prompt"
 _RUNTIME_SLOT_IMAGES = "_h3_slot_images"
+_VISIBLE_IMAGE_SLOTS = ("a", "b", "c")
 
 
 def _semantic_layout(layout: Any) -> Any:
     """Return layout data without runtime IMAGE payloads.
 
     IMAGE tensors are execution-time sidecars. They must never enter schema
-    sanitization, layout JSON, prompt text, or compiler model structure.
+    sanitization, layout JSON, compiler model structure, or debug JSON.
     """
     if not isinstance(layout, dict) or _RUNTIME_SLOT_IMAGES not in layout:
         return layout
@@ -28,6 +29,26 @@ def _runtime_slot_images(layout: Any) -> dict[str, Any]:
         return {}
     images = layout.get(_RUNTIME_SLOT_IMAGES)
     return images if isinstance(images, dict) else {}
+
+
+def _picture_mapping_suffix(layout: Any) -> str:
+    """Build deterministic <Picture n> mapping for connected A/B/C images.
+
+    MiniMax H3 Reference to Video numbers only the connected reference images,
+    in input order. Mirror that compaction here so A/C becomes Picture 1/2 when
+    B is disconnected.
+    """
+    images = _runtime_slot_images(layout)
+    connected = [slot for slot in _VISIBLE_IMAGE_SLOTS if images.get(slot) is not None]
+    if not connected:
+        return ""
+    lines = ["Reference image mapping:"]
+    for ordinal, slot in enumerate(connected, start=1):
+        lines.append(f"- <Picture {ordinal}> is the visual reference for Slot {slot.upper()}.")
+    lines.append(
+        "Preserve each mapped slot's identity and appearance from its assigned picture while following its Canvas layout and motion."
+    )
+    return "\n".join(lines)
 
 
 class H3StructuredCanvas:
@@ -50,11 +71,11 @@ class H3StructuredCanvas:
             },
         }
 
-    RETURN_TYPES = ("H3_LAYOUT", "INT", "INT")
-    RETURN_NAMES = ("layout", "width", "height")
+    RETURN_TYPES = ("H3_LAYOUT", "INT", "INT", "IMAGE", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("layout", "width", "height", "A", "B", "C")
     FUNCTION = "build"
     CATEGORY = CATEGORY
-    DESCRIPTION = "Draw normalized 0–1000 semantic BBOX layout. Optional A/B/C IMAGE inputs are runtime-only and bypass cleanly when disconnected."
+    DESCRIPTION = "Draw normalized 0–1000 semantic BBOX layout. Optional A/B/C IMAGE inputs pass through for MiniMax H3 Reference to Video and bypass cleanly when disconnected."
 
     def build(
         self,
@@ -66,7 +87,7 @@ class H3StructuredCanvas:
         A: Any = None,
         B: Any = None,
         C: Any = None,
-    ) -> tuple[dict[str, Any], int, int]:
+    ) -> tuple[dict[str, Any], int, int, Any, Any, Any]:
         layout, warnings = sanitize_layout(
             layout_json,
             width_override=width if width is not None else canvas_width,
@@ -81,7 +102,7 @@ class H3StructuredCanvas:
             layout = dict(layout)
             layout[_RUNTIME_SLOT_IMAGES] = slot_images
 
-        return layout, int(layout["canvas"]["width"]), int(layout["canvas"]["height"])
+        return layout, int(layout["canvas"]["width"]), int(layout["canvas"]["height"]), A, B, C
 
 
 class H3LayoutTransition:
@@ -141,10 +162,13 @@ class H3StructuredPrompter:
     RETURN_NAMES = ("prompt",)
     FUNCTION = "compile"
     CATEGORY = CATEGORY
-    DESCRIPTION = "Compile normalized BBOX layout, semantic elements, motion presets and camera instructions into a MiniMax H3 prompt."
+    DESCRIPTION = "Compile normalized BBOX layout, semantic elements, motion presets and camera instructions into a MiniMax H3 prompt. Connected Canvas A/B/C images are mapped automatically to <Picture n>."
 
     def compile(self, layout: Any, config_json: str) -> tuple[str]:
         prompt, _structure, _debug = compile_h3_prompt(_semantic_layout(layout), config_json)
+        picture_mapping = _picture_mapping_suffix(layout)
+        if picture_mapping:
+            prompt = f"{prompt}\n\n{picture_mapping}"
         return (prompt,)
 
 
