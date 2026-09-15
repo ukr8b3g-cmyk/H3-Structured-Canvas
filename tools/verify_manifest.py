@@ -36,6 +36,8 @@ def main() -> int:
             continue
         actual = hashlib.sha256(canonical_bytes(path)).hexdigest()
         checked += 1
+        if relative == "web/zzzzzzz_h3sc_multikey_timeline.js":
+            print(f"HASH {actual}  {relative}")
         if actual.lower() != expected.lower():
             failures.append(f"MISMATCH {relative}")
     if failures:
