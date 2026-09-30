@@ -21,6 +21,38 @@ const VIEW_SPAN = VIEW_MAX - VIEW_MIN;
 const clone = (value) => value == null ? value : JSON.parse(JSON.stringify(value));
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+function simplifiedAspect(width, height) {
+  const w = Math.max(1, Math.round(Number(width) || 1));
+  const h = Math.max(1, Math.round(Number(height) || 1));
+  const ratio = w / h;
+  const canonical = [[1,1],[16,9],[9,16],[4,3],[3,4],[3,2],[2,3],[21,9],[9,21]];
+  let best = canonical[0];
+  let bestError = Infinity;
+  for (const candidate of canonical) {
+    const target = candidate[0] / candidate[1];
+    const error = Math.abs(ratio - target) / target;
+    if (error < bestError) {
+      best = candidate;
+      bestError = error;
+    }
+  }
+  if (bestError <= 0.025) return `${best[0]}:${best[1]}`;
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const divisor = gcd(w, h);
+  return `${w / divisor}:${h / divisor}`;
+}
+
+function setNativeWidgetValue(widget, value, node) {
+  if (!widget) return;
+  widget.value = value;
+  widget.serialize = true;
+  widget.options = widget.options || {};
+  widget.options.serialize = true;
+  const index = node?.widgets?.indexOf(widget) ?? -1;
+  if (Array.isArray(node?.widgets_values) && index >= 0) node.widgets_values[index] = value;
+  widget.callback?.(value, app?.canvas, node, [0, 0], null);
+}
+
 function parseObject(value) {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
@@ -284,25 +316,38 @@ function assignBox(controller, slot, rawBox, creating = false) {
 }
 
 function saveState(controller) {
-  const raw = JSON.stringify(serializeLayout(controller));
-  const widget = controller.stateWidget;
-  if (widget) {
-    widget.value = raw;
-    widget.serialize = true;
-    widget.options = widget.options || {};
-    widget.options.serialize = true;
-    widget.callback?.(raw, app?.canvas, controller.node, [0, 0], null);
-  }
   const node = controller.node;
+  const previousWidth = Number(controller.widthWidget?.value);
+  const previousHeight = Number(controller.heightWidget?.value);
+  const width = clamp(Math.round(Number(controller.state?.canvas?.width) || 1024), 64, 16384);
+  const height = clamp(Math.round(Number(controller.state?.canvas?.height) || 1024), 64, 16384);
+  const sizeChanged = previousWidth !== width || previousHeight !== height;
+
+  controller.state.canvas.width = width;
+  controller.state.canvas.height = height;
+  controller.state.canvas.aspect_ratio = simplifiedAspect(width, height);
+
+  // Multi-key replaces the base Canvas sync() method, so keep the native
+  // execution widgets in lockstep with the visible Canvas state explicitly.
+  setNativeWidgetValue(controller.widthWidget, width, node);
+  setNativeWidgetValue(controller.heightWidget, height, node);
+
+  const raw = JSON.stringify(serializeLayout(controller));
+  setNativeWidgetValue(controller.stateWidget, raw, node);
+
   if (node) {
     node.properties = node.properties || {};
     node.properties.h3scMultiKeyState = { version: 4, layout_json: raw };
-    const widgetIndex = node.widgets?.indexOf(widget) ?? -1;
-    if (Array.isArray(node.widgets_values) && widgetIndex >= 0) node.widgets_values[widgetIndex] = raw;
   }
+
+  controller.updateControls?.();
   controller.node?.setDirtyCanvas?.(true, true);
   app?.graph?.setDirtyCanvas?.(true, true);
-  refreshAll(controller, true);
+
+  // Rebuild only when the aspect/size actually changed. The inherited render
+  // path performs the stage refit; normal key/drag/playhead edits stay lightweight.
+  if (sizeChanged) controller.render();
+  else refreshAll(controller, true);
 }
 
 function setPlayhead(controller, value) {

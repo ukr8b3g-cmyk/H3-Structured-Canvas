@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Fix Issue #1 in the Multi-Key Canvas overlay: resolution preset / Apply now keep visible width/height controls, native `canvas_width` / `canvas_height` execution widgets, serialized layout JSON, and Canvas display geometry synchronized.
+- Refit the Canvas stage only when resolution actually changes; Multi-Key key editing, dragging, playback, and v4 serialization remain unchanged.
+
 ## 0.9.2-beta.3
 
 - Removed Duration/length control from Structured Prompter. Generation duration now belongs to Core H3 / Continuum.

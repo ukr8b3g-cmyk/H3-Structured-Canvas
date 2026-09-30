@@ -146,6 +146,20 @@ class MultiKeyTimelineTests(unittest.TestCase):
         self.assertIn("key.time - previous.time < gap", source)
         self.assertIn("importKeys(exp.tracks[slot], timeline, slot, exp.duration)", source)
 
+    def test_multikey_size_sync_updates_runtime_widgets_json_and_display(self):
+        source = MULTIKEY_JS.read_text(encoding="utf-8")
+        for required in (
+            "const previousWidth = Number(controller.widthWidget?.value);",
+            "const previousHeight = Number(controller.heightWidget?.value);",
+            "controller.state.canvas.aspect_ratio = simplifiedAspect(width, height);",
+            "setNativeWidgetValue(controller.widthWidget, width, node);",
+            "setNativeWidgetValue(controller.heightWidget, height, node);",
+            "setNativeWidgetValue(controller.stateWidget, raw, node);",
+            "if (sizeChanged) controller.render();",
+            "else refreshAll(controller, true);",
+        ):
+            self.assertIn(required, source)
+
     def test_frontend_canvas_interaction_engine_avoids_known_regressions(self):
         source = MULTIKEY_JS.read_text(encoding="utf-8")
         self.assertNotIn("controller.activeSlot =", source)
